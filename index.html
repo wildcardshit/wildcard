@@ -1543,18 +1543,34 @@
       padding:11px 11px 13px;
       border-radius:18px;
       transform-origin:50% 108%;
-      transition:none;
-      will-change:transform, box-shadow, opacity, filter;
+      /* Only transform/opacity are touched every animation frame (both are
+         compositor-only, so the fan can glide at a steady 60/120fps without
+         forcing layout or paint work). Depth cues below are class-driven
+         and cross-fade on their own CSS transition instead. */
+      transition:box-shadow .45s cubic-bezier(.22,1,.36,1), filter .45s cubic-bezier(.22,1,.36,1);
+      will-change:transform, opacity;
       backface-visibility:hidden;
       -webkit-backface-visibility:hidden;
       touch-action:pan-y;
       cursor:grab;
+      box-shadow:0 10px 22px rgba(22,20,15,0.14);
+      filter:saturate(0.82) brightness(0.92);
     }
-    .pick__hand.is-dragging .pick__card{ cursor:grabbing; }
-    .pick__card.is-active{ cursor:default; }
+    .pick__hand.is-dragging .pick__card{ cursor:grabbing; transition:none; }
+    .pick__card.is-near{
+      box-shadow:0 16px 32px rgba(22,20,15,0.2);
+      filter:saturate(0.94) brightness(0.98);
+    }
+    .pick__card.is-active{
+      cursor:default;
+      filter:none;
+      box-shadow:
+        0 26px 54px rgba(22,20,15,0.28),
+        0 0 0 3px rgba(var(--accent-rgb,22,20,15), 0.9),
+        0 0 32px 4px rgba(var(--accent-rgb,22,20,15), 0.34);
+    }
     .pick__card:hover, .pick__card:focus-within{
       transform:none;
-      box-shadow:none;
       z-index:auto;
     }
     .pick__card .pick__photo{ margin:5px 0 8px; }
@@ -1854,6 +1870,15 @@ const IMG_YELLOW = "images/yellow-shirt.png";
   // Build the interactive "Pick a Card" hand from real Phase 1 product photos
   const pickHand = document.getElementById('pickHand');
   const pickCenter = (DECK.length - 1) / 2;
+
+  function hexToRgbTriple(hex){
+    const h = hex.trim().replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    const num = parseInt(full, 16);
+    if (Number.isNaN(num)) return '22,20,15';
+    return `${(num >> 16) & 255},${(num >> 8) & 255},${num & 255}`;
+  }
+
   DECK.forEach((item, i)=>{
     const offset = i - pickCenter;
     const card = document.createElement('article');
@@ -1864,6 +1889,9 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     card.style.setProperty('--rot', `${offset * 4}deg`);
     card.style.setProperty('--z', `${10 - Math.abs(offset)}`);
     card.style.setProperty('--accent', item.hex);
+    // Set once at build time (not per animation frame) so the mobile fan's
+    // active-card glow can be pure CSS — see .pick__card.is-active.
+    card.style.setProperty('--accent-rgb', hexToRgbTriple(item.hex));
     card.innerHTML = `
       <span class="pick__index" style="color:${item.hex}">${item.suit}</span>
       <div class="pick__photo"><img src="${item.img}" alt="${item.label} colorway raglan"></div>
@@ -1994,7 +2022,6 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         const abs = Math.abs(offset);
         const clamped = clamp(offset, -2.4, 2.4);
         const isActive = abs < 0.18;
-        const lift = clamp(1 - abs, 0, 1);
         // Active card gets an extra size boost on top of the normal falloff curve,
         // so the selected card reads as clearly "chosen" rather than just centered.
         const baseScale = clamp(1 - abs * 0.1, 0.62, 1);
@@ -2006,32 +2033,43 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         const rotZ = clamped * 11;
         const rotY = clamp(offset * -3.4, -14, 14);
         const opacity = abs > 3 ? 0 : clamp(1 - Math.max(0, abs - 2) * 0.85, 0, 1);
+        // transform + opacity are the only two properties touched every
+        // frame — both are compositor-only (no layout, no paint), which is
+        // what keeps the fan gliding smoothly instead of feeling choppy.
         card.style.transform =
           `translateX(-50%) translate3d(${tx}px, ${ty}px, ${tz}px) rotateZ(${rotZ}deg) rotateY(${rotY}deg) scale(${scale})`;
         card.style.zIndex = String(Math.round(1000 - abs * 10));
         card.style.opacity = String(opacity);
-        const accent = card.style.getPropertyValue('--accent') || '#16140F';
-        card.style.boxShadow = isActive
-          ? `0 ${18 + lift * 30}px ${30 + lift * 54}px rgba(22,20,15,${(0.22 + lift * 0.18).toFixed(3)}), 0 0 0 3px ${hexToRgba(accent, 0.9)}, 0 0 32px 4px ${hexToRgba(accent, 0.34)}`
-          : `0 ${10 + lift * 26}px ${22 + lift * 46}px rgba(22,20,15,${(0.16 + lift * 0.16).toFixed(3)})`;
-        const blur = clamp(abs * 1.15, 0, 3.4);
-        const sat = clamp(1 - abs * 0.18, 0.5, 1);
-        // Dim non-active cards slightly so the eye locks onto the selected one.
-        const bright = isActive ? 1 : clamp(1 - abs * 0.16, 0.62, 1);
-        const filterParts = [];
-        if (blur >= 0.05) filterParts.push(`blur(${blur.toFixed(2)}px)`);
-        filterParts.push(`saturate(${sat.toFixed(2)})`);
-        filterParts.push(`brightness(${bright.toFixed(2)})`);
-        card.style.filter = filterParts.join(' ');
-        card.style.pointerEvents = abs < 2.2 ? 'auto' : 'none';
-        card.classList.toggle('is-active', isActive);
-        card.setAttribute('aria-hidden', abs < 2.2 ? 'false' : 'true');
+
+        // Depth (shadow + saturation/brightness) is expressed as CSS classes
+        // with their own CSS transition, so the browser cross-fades them on
+        // its own timeline instead of us re-painting a new box-shadow/filter
+        // string on every animation frame. Only write to the DOM when a
+        // card actually crosses into a new bucket.
+        const isNear = !isActive && abs < 1.35;
+        const hidden = abs >= 2.2;
+        if (card._pickActive !== isActive){
+          card.classList.toggle('is-active', isActive);
+          card._pickActive = isActive;
+        }
+        if (card._pickNear !== isNear){
+          card.classList.toggle('is-near', isNear);
+          card._pickNear = isNear;
+        }
+        if (card._pickHidden !== hidden){
+          card.style.pointerEvents = hidden ? 'none' : 'auto';
+          card.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+          card._pickHidden = hidden;
+        }
       });
       if (dotsEl){
         const nearest = clamp(Math.round(pos), 0, count - 1);
-        Array.from(dotsEl.children).forEach((dot, i) => {
-          dot.classList.toggle('is-active', i === nearest);
-        });
+        if (dotsEl._pickActive !== nearest){
+          Array.from(dotsEl.children).forEach((dot, i) => {
+            dot.classList.toggle('is-active', i === nearest);
+          });
+          dotsEl._pickActive = nearest;
+        }
       }
     }
 
@@ -2042,6 +2080,18 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     function stopAnimation(){
       if (rafId){ cancelAnimationFrame(rafId); rafId = null; }
     }
+
+    // Spring tuned like a native card-stack (SwiftUI-style response/damping),
+    // then converted to stiffness/damping so the glide is driven by real
+    // elapsed time rather than "per frame". That's what makes it look the
+    // same — and stay smooth — on a 60Hz, 90Hz or 120Hz phone alike, instead
+    // of speeding up/slowing down (i.e. feeling choppy) with the frame rate.
+    const SPRING_RESPONSE = 0.4;   // seconds to feel "arrived"
+    const SPRING_DAMPING = 0.86;   // 1.0 = no overshoot, <1 = slight settle
+    const SPRING_OMEGA = (2 * Math.PI) / SPRING_RESPONSE;
+    const SPRING_STIFFNESS = SPRING_OMEGA * SPRING_OMEGA;
+    const SPRING_DAMPING_COEF = 2 * SPRING_DAMPING * SPRING_OMEGA;
+    const MAX_STEP = 1 / 30; // clamp dt so a stalled tab can't cause a jump
 
     function springTo(target, initialVelocity){
       stopAnimation();
@@ -2056,13 +2106,17 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         return;
       }
       let v = initialVelocity || 0;
-      function step(){
+      let last = null;
+      function step(now){
+        if (last === null) last = now;
+        const dt = Math.min((now - last) / 1000, MAX_STEP);
+        last = now;
         const dist = target - position;
-        v += dist * 0.24;
-        v *= 0.8;
-        position += v;
+        const accel = dist * SPRING_STIFFNESS - v * SPRING_DAMPING_COEF;
+        v += accel * dt;
+        position += v * dt;
         render(position);
-        if (Math.abs(dist) < 0.0025 && Math.abs(v) < 0.0025){
+        if (Math.abs(dist) < 0.001 && Math.abs(v) < 0.001){
           position = target;
           render(position);
           rafId = null;
@@ -2122,10 +2176,12 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       dragging = false;
       pickHand.classList.remove('is-dragging');
       if (axisLocked !== 'x'){ axisLocked = null; return; }
+      // velocity is px/ms from the drag; convert to index-units/second so it
+      // can be handed straight to the time-based spring below.
+      const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
       const target = clamp(Math.round(projected), 0, count - 1);
-      const initialVelocity = -velocity * (16 / cardStep);
-      springTo(target, initialVelocity);
+      springTo(target, -indexPerSecond);
       axisLocked = null;
     }
 
@@ -2192,11 +2248,10 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         card.style.transform = '';
         card.style.zIndex = '';
         card.style.opacity = '';
-        card.style.boxShadow = '';
-        card.style.filter = '';
         card.style.pointerEvents = '';
         card.removeAttribute('aria-hidden');
-        card.classList.remove('is-active');
+        card.classList.remove('is-active', 'is-near');
+        card._pickActive = card._pickNear = card._pickHidden = undefined;
       });
       if (dotsEl){ dotsEl.remove(); dotsEl = null; }
       if (glowEl){ glowEl.remove(); glowEl = null; }
