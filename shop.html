@@ -2005,6 +2005,27 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       return;
     }
 
+    // Anything already sitting in (or just below) the initial viewport on
+    // page load should be visible immediately — no one should have to
+    // scroll to discover content that's basically already "above the
+    // fold". Only elements that start further down the page get the
+    // scroll-triggered fade-up treatment.
+    const startingViewportBottom = window.innerHeight * 1.1;
+    const revealNow = [];
+    const revealOnScroll = [];
+    items.forEach(el => {
+      const rect = el.getBoundingClientRect();
+      if (rect.top < startingViewportBottom) {
+        revealNow.push(el);
+      } else {
+        revealOnScroll.push(el);
+      }
+    });
+
+    revealNow.forEach(el => el.classList.add('is-visible'));
+
+    if (!revealOnScroll.length) return;
+
     const io = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (!entry.isIntersecting) return;
@@ -2020,7 +2041,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       });
     }, { threshold: 0.16, rootMargin: '0px 0px -10% 0px' });
 
-    items.forEach(el => io.observe(el));
+    revealOnScroll.forEach(el => io.observe(el));
   })();
 </script>
 </body>
