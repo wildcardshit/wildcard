@@ -2011,28 +2011,73 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       glowEl.style.boxShadow = `0 0 130px 85px ${hexToRgba(accent, 0.24)}`;
     }
 
-    function rubberBand(overshoot){
-      // resistance curve so the ends of the deck push back softly
-      return Math.sqrt(Math.max(0, overshoot)) * 14;
+    function lerp(a, b, t){ return a + (b - a) * t; }
+
+    // Shortest signed distance from card i to the (continuous) fan position,
+    // wrapped around the deck so the hand loops infinitely instead of
+    // stopping dead at card 1 or card 5 — card 5 "wraps" straight into
+    // card 1 the same way a real deck would cut back around.
+    function wrappedOffset(i, pos){
+      let off = i - pos;
+      off -= count * Math.round(off / count);
+      return off;
     }
 
-    function render(pos){
+    // Each card gets its own small fixed "personality" — a unique blend of
+    // rotation/depth/offset bias — assigned once. Combined with the
+    // per-swipe burst energy below, this is what keeps every flick's
+    // trajectory looking distinct instead of every card tracing the same
+    // identical path.
+    function ensureSignature(card){
+      if (card._sig) return card._sig;
+      const rand = () => Math.random() * 2 - 1;
+      card._sig = {
+        rot: rand(),
+        spin: rand(),
+        z: rand(),
+        x: rand(),
+        y: Math.random(),
+      };
+      return card._sig;
+    }
+
+    function render(pos, energy){
+      energy = energy || 0;
       cards.forEach((card, i) => {
-        const offset = i - pos;
+        const offset = wrappedOffset(i, pos);
         const abs = Math.abs(offset);
         const clamped = clamp(offset, -2.4, 2.4);
         const isActive = abs < 0.18;
         // Active card gets an extra size boost on top of the normal falloff curve,
-        // so the selected card reads as clearly "chosen" rather than just centered.
+        // so the selected card reads as clearly "chosen" rather than just centered —
+        // it floats up and enlarges above the rest of the hand.
         const baseScale = clamp(1 - abs * 0.1, 0.62, 1);
         const activeBoost = 1 + 0.08 * clamp(1 - abs / 0.18, 0, 1);
         const scale = isActive ? baseScale * activeBoost : baseScale;
-        const tx = offset * 46;
-        const ty = Math.min(abs * 20, 60);
-        const tz = -Math.min(abs * 46, 180);
-        const rotZ = clamped * 11;
-        const rotY = clamp(offset * -3.4, -14, 14);
-        const opacity = abs > 3 ? 0 : clamp(1 - Math.max(0, abs - 2) * 0.85, 0, 1);
+        let tx = offset * 46;
+        let ty = Math.min(abs * 20, 60);
+        let tz = -Math.min(abs * 46, 180);
+        let rotZ = clamped * 11;
+        let rotY = clamp(offset * -3.4, -14, 14);
+        const opacity = clamp(1 - Math.max(0, abs - 1.7) * 1.3, 0, 1);
+
+        // "Explosion" burst: a decaying energy value handed in from the
+        // spring, scaled per-card by that card's own signature and by how
+        // far it sits from the new center (outer cards fling further, like
+        // cards scattering off a deck) — then it decays back to 0 as the
+        // spring settles, so the hand always regroups into the same tidy
+        // fan no matter how hard it was flicked.
+        if (energy > 0.001){
+          const sig = ensureSignature(card);
+          const spread = 0.35 + abs * 0.65;
+          const burst = energy * spread;
+          tx += sig.x * burst * 50;
+          ty += sig.y * burst * -78;
+          tz += sig.z * burst * 170;
+          rotZ += sig.rot * burst * 55;
+          rotY += sig.spin * burst * 30;
+        }
+
         // transform + opacity are the only two properties touched every
         // frame — both are compositor-only (no layout, no paint), which is
         // what keeps the fan gliding smoothly instead of feeling choppy.
@@ -2047,7 +2092,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         // string on every animation frame. Only write to the DOM when a
         // card actually crosses into a new bucket.
         const isNear = !isActive && abs < 1.35;
-        const hidden = abs >= 2.2;
+        const hidden = abs >= 2.3;
         if (card._pickActive !== isActive){
           card.classList.toggle('is-active', isActive);
           card._pickActive = isActive;
@@ -2063,7 +2108,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         }
       });
       if (dotsEl){
-        const nearest = clamp(Math.round(pos), 0, count - 1);
+        const nearest = ((Math.round(pos) % count) + count) % count;
         if (dotsEl._pickActive !== nearest){
           Array.from(dotsEl.children).forEach((dot, i) => {
             dot.classList.toggle('is-active', i === nearest);
@@ -2086,39 +2131,53 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     // elapsed time rather than "per frame". That's what makes it look the
     // same — and stay smooth — on a 60Hz, 90Hz or 120Hz phone alike, instead
     // of speeding up/slowing down (i.e. feeling choppy) with the frame rate.
-    const SPRING_RESPONSE = 0.4;   // seconds to feel "arrived"
-    const SPRING_DAMPING = 0.86;   // 1.0 = no overshoot, <1 = slight settle
-    const SPRING_OMEGA = (2 * Math.PI) / SPRING_RESPONSE;
-    const SPRING_STIFFNESS = SPRING_OMEGA * SPRING_OMEGA;
-    const SPRING_DAMPING_COEF = 2 * SPRING_DAMPING * SPRING_OMEGA;
+    // Response/damping are no longer fixed: springTo() blends between a
+    // slow, controlled pair and a fast, springier pair based on how hard the
+    // deck was flicked, so a slow swipe glides gently into place while a
+    // fast flick snaps across the screen and settles with a bit of overshoot.
+    const SPRING_RESPONSE_SLOW = 0.46;  // seconds to feel "arrived" — gentle drag/tap
+    const SPRING_RESPONSE_FAST = 0.22;  // seconds to feel "arrived" — hard flick
+    const SPRING_DAMPING_SLOW = 0.92;   // 1.0 = no overshoot
+    const SPRING_DAMPING_FAST = 0.66;   // more overshoot/bounce on energetic flicks
     const MAX_STEP = 1 / 30; // clamp dt so a stalled tab can't cause a jump
 
-    function springTo(target, initialVelocity){
+    function springTo(target, initialVelocity, energy){
       stopAnimation();
-      if (target !== activeIndex){
+      const nextActive = ((Math.round(target) % count) + count) % count;
+      if (nextActive !== activeIndex){
         try { if (navigator.vibrate) navigator.vibrate(8); } catch(err){}
       }
-      activeIndex = target;
-      updateGlow(target);
+      activeIndex = nextActive;
+      updateGlow(activeIndex);
       if (reduceMotion){
         position = target;
-        render(position);
+        render(position, 0);
         return;
       }
+      energy = clamp(energy || 0, 0, 1);
       let v = initialVelocity || 0;
+      let burst = energy;
+      const response = lerp(SPRING_RESPONSE_SLOW, SPRING_RESPONSE_FAST, energy);
+      const damping = lerp(SPRING_DAMPING_SLOW, SPRING_DAMPING_FAST, energy);
+      const omega = (2 * Math.PI) / response;
+      const stiffness = omega * omega;
+      const dampingCoef = 2 * damping * omega;
+      const burstDecay = lerp(4.5, 9.5, energy); // faster flicks also regroup a touch quicker
       let last = null;
       function step(now){
         if (last === null) last = now;
         const dt = Math.min((now - last) / 1000, MAX_STEP);
         last = now;
         const dist = target - position;
-        const accel = dist * SPRING_STIFFNESS - v * SPRING_DAMPING_COEF;
+        const accel = dist * stiffness - v * dampingCoef;
         v += accel * dt;
         position += v * dt;
-        render(position);
-        if (Math.abs(dist) < 0.001 && Math.abs(v) < 0.001){
+        burst *= Math.exp(-burstDecay * dt);
+        if (burst < 0.004) burst = 0;
+        render(position, burst);
+        if (Math.abs(dist) < 0.001 && Math.abs(v) < 0.001 && burst === 0){
           position = target;
-          render(position);
+          render(position, 0);
           rafId = null;
           return;
         }
@@ -2128,7 +2187,12 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     }
 
     function goTo(index){
-      springTo(clamp(index, 0, count - 1), 0);
+      // A tap on a card or dot still gets a small, consistent burst of
+      // "deck" energy so the hand always feels alive when it regroups —
+      // just gentler than a real flick. Travel by the shortest circular
+      // path from wherever the hand currently sits.
+      const target = Math.round(position + wrappedOffset(index, position));
+      springTo(target, 0, 0.3);
     }
 
     function onPointerDown(e){
@@ -2158,11 +2222,11 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         }
       }
       if (axisLocked !== 'x') return;
-      let raw = startPosition - dx / cardStep;
-      if (raw < 0) raw = -rubberBand(-raw) / cardStep;
-      else if (raw > count - 1) raw = (count - 1) + rubberBand(raw - (count - 1)) / cardStep;
-      position = raw;
-      render(position);
+      // No clamping and no rubber-banding at the ends — the hand loops
+      // infinitely through the same 5 cards, so dragging past "card 5"
+      // just keeps cutting back around to card 1, like a real deck.
+      position = startPosition - dx / cardStep;
+      render(position, 0);
       const now = performance.now();
       const dt = now - lastT;
       if (dt > 4){
@@ -2170,6 +2234,11 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         lastX = e.clientX; lastT = now;
       }
     }
+
+    // Speed (in px/ms) above which a release counts as a "full" flick —
+    // tuned against typical mobile swipe speeds. Below this, energy scales
+    // down toward 0 for a slow, controlled release with no burst at all.
+    const FLICK_SPEED_REF = 1.0;
 
     function onPointerUp(e){
       if (!dragging) return;
@@ -2180,8 +2249,9 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       // can be handed straight to the time-based spring below.
       const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
-      const target = clamp(Math.round(projected), 0, count - 1);
-      springTo(target, -indexPerSecond);
+      const target = Math.round(projected);
+      const energy = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+      springTo(target, -indexPerSecond, energy);
       axisLocked = null;
     }
 
@@ -2211,7 +2281,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
 
     function onCardClick(e, index){
       if (dragging) return;
-      const abs = Math.abs(index - position);
+      const abs = Math.abs(wrappedOffset(index, position));
       if (abs > 0.18){
         e.preventDefault();
         e.stopPropagation();
