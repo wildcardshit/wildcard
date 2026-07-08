@@ -1707,7 +1707,7 @@
   }
   .pick__title{ order:1; }
   .pick__hint{ order:2; margin:0 0 20px; }
-  .pick__hand{ order:3; width:100%; height:380px; min-height:380px; }
+  .pick__hand{ order:3; width:100%; height:380px; min-height:380px; perspective:900px; }
   .pick__dots{ order:4; }
   .pick__sub{
     order:5;
@@ -2053,6 +2053,11 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         z: rand(),
         x: rand(),
         y: Math.random(),
+        // Burst-only personality: how eagerly this card reacts to a flick
+        // (chase) and how it trails on the way back (settle) — different
+        // per card so the deck doesn't move as one rigid unit.
+        chase: Math.random(),
+        settle: Math.random(),
       };
       return card._sig;
     }
@@ -2068,15 +2073,17 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       return card._photoImg;
     }
 
-    function render(pos, energy){
-      energy = energy || 0;
+    function render(pos, energy, dt){
+      energy = clamp(energy || 0, 0, 1);
+      dt = dt || 0;
       cards.forEach((card, i) => {
         const offset = wrappedOffset(i, pos);
         const abs = Math.abs(offset);
         const isActive = abs < 0.18;
         // Cards sit on a single flat line and slide sideways past each
-        // other, like a hand dealing cards across a table — no fan curve,
-        // no upward lift, no 3D tilt.
+        // other, like a hand dealing cards across a table as their baseline
+        // — the burst physics below is what turns that calm baseline into
+        // a living deck the instant it gets flicked.
         const baseScale = clamp(1 - abs * 0.16, 0.6, 1);
         const activeBoost = 1 + 0.08 * clamp(1 - abs / 0.18, 0, 1);
         const scale = isActive ? baseScale * activeBoost : baseScale;
@@ -2093,27 +2100,59 @@ const IMG_YELLOW = "images/yellow-shirt.png";
           tx += (offset / abs) * neighborPush * scatterPx;
         }
         let ty = 0;
-        const opacity = clamp(1 - Math.max(0, abs - 2.2) * 1.3, 0, 1);
+        let opacity = clamp(1 - Math.max(0, abs - 2.2) * 1.3, 0, 1);
 
-        // "Slide" burst: a decaying energy value handed in from the
-        // spring, scaled per-card by that card's own signature and by how
-        // far it sits from the new center (outer cards slide further, like
-        // cards scattering across a tabletop) — then it decays back to 0
-        // as the spring settles, so the row always regroups into the same
-        // tidy line no matter how hard it was flicked.
-        if (energy > 0.001){
-          const sig = ensureSignature(card);
-          const spread = 0.35 + abs * 0.65;
-          const burst = energy * spread;
-          tx += sig.x * burst * 70;
-          ty += sig.y * burst * 14; // faint table-friction wobble only
+        // ---------- "Living deck" burst-apart physics ----------
+        // Rather than every card obeying the same decaying energy value on
+        // the same clock, each card chases the shared burst with its own
+        // speed (sig.chase / sig.settle). Fast chasers snap outward almost
+        // immediately; slow chasers lag half a beat behind — and because
+        // they're chasing independently, they also drift back into the
+        // stack at slightly different moments, instead of every card
+        // reforming in unison. That stagger is what sells "deck" instead
+        // of "five synced cards".
+        const sig = ensureSignature(card);
+        if (card._burstOwn === undefined) card._burstOwn = 0;
+        const outness = clamp(abs / 2.2, 0, 1);
+        const risePerSec = lerp(14, 5, sig.chase) * lerp(1, 0.55, outness);   // outward: fast
+        const fallPerSec = lerp(3.5, 1.4, sig.settle) * lerp(1, 0.6, outness); // return: slower, staggered
+        const chaseRate = energy > card._burstOwn ? risePerSec : fallPerSec;
+        const follow = dt > 0 ? clamp(chaseRate * dt, 0, 1) : (energy > card._burstOwn ? 1 : 0);
+        card._burstOwn += (energy - card._burstOwn) * follow;
+        const burst = card._burstOwn;
+
+        // The card nearest dead-center is shielded from almost all of the
+        // burst — the hero should stay put and stay readable while
+        // everything around it flies apart.
+        const heroShield = clamp((abs - 0.16) / 0.55, 0, 1);
+        const kick = burst * heroShield;
+
+        if (kick > 0.001){
+          // Momentum: outer cards travel much further than inner ones, so
+          // a hard flick reads as an explosion radiating outward, not a
+          // uniform shove.
+          const flight = lerp(55, 230, outness);
+          tx += sig.x * kick * flight;
+          ty += (sig.y * 2 - 1) * kick * 90;
+          opacity *= 1 - kick * 0.28;
         }
+
+        // Large, per-card rotation while airborne — this is the single
+        // biggest thing that sells "tumbling cards" instead of "sliding
+        // panels". Direction/magnitude come from each card's own spin bias
+        // so neighbors never rotate in lockstep.
+        const burstRot = sig.spin * kick * lerp(35, 150, 0.25 + outness * 0.75);
+        // Depth: airborne cards recede slightly (translateZ + a touch of
+        // extra shrink + blur) so the burst reads as scattering into space
+        // around the hero, not just sideways on a flat plane.
+        const burstZ = -kick * 140;
+        const burstScale = 1 - kick * 0.16;
 
         // The shirt itself grows continuously as its card nears center —
         // not a subtle hover pop, but a real 40-60% blow-up that peaks
         // when the card is dead center — and gets a brief overshoot/bounce
-        // from the same decaying spring energy right as it lands, so the
-        // hero moment reads as "arriving" rather than just appearing.
+        // from the same burst energy right as it lands, so the hero moment
+        // reads as "arriving" rather than just appearing.
         const heroCloseness = clamp(1 - abs, 0, 1);
         const heroOvershoot = energy > 0.001 ? energy * heroCloseness * 1.4 : 0;
         const heroScale = 1 + 0.55 * heroCloseness + heroOvershoot;
@@ -2125,13 +2164,21 @@ const IMG_YELLOW = "images/yellow-shirt.png";
           photoImg.style.transform = `scale(${heroScale}) translateZ(${heroZ}px)`;
         }
 
-        // transform + opacity are the only two properties touched every
-        // frame — both are compositor-only (no layout, no paint), which is
-        // what keeps the slide gliding smoothly instead of feeling choppy.
+        // transform + opacity (+ filter while airborne) are the only
+        // properties touched every frame — all compositor-only, which is
+        // what keeps the burst gliding smoothly instead of feeling choppy.
         card.style.transform =
-          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
-        card.style.zIndex = String(Math.round(1000 - abs * 10));
+          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, ${burstZ.toFixed(1)}px) rotate(${burstRot.toFixed(2)}deg) scale(${(scale * burstScale).toFixed(3)})`;
+        card.style.zIndex = String(Math.round(1000 - abs * 10 + kick * 5));
         card.style.opacity = String(opacity);
+
+        const blurred = kick > 0.02;
+        if (blurred){
+          card.style.filter = `blur(${(kick * 1.8).toFixed(2)}px)`;
+        } else if (card._pickBlurred){
+          card.style.filter = '';
+        }
+        card._pickBlurred = blurred;
 
         // Depth (shadow + saturation/brightness) is expressed as CSS classes
         // with their own CSS transition, so the browser cross-fades them on
@@ -2222,10 +2269,10 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         position += v * dt;
         burst *= Math.exp(-burstDecay * dt);
         if (burst < 0.004) burst = 0;
-        render(position, burst);
+        render(position, burst, dt);
         if (Math.abs(dist) < 0.001 && Math.abs(v) < 0.001 && burst === 0){
           position = target;
-          render(position, 0);
+          render(position, 0, dt);
           rafId = null;
           return;
         }
@@ -2298,7 +2345,11 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
       const target = Math.round(projected);
-      const energy = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+      // Sharpen the curve (rather than a flat linear map) so a genuine
+      // flick disproportionately out-bursts a lazy drag — small releases
+      // barely ripple the deck, hard flicks make it explode.
+      const linearEnergy = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+      const energy = Math.pow(linearEnergy, 0.72);
       springTo(target, -indexPerSecond, energy);
       axisLocked = null;
     }
@@ -2366,10 +2417,12 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         card.style.transform = '';
         card.style.zIndex = '';
         card.style.opacity = '';
+        card.style.filter = '';
         card.style.pointerEvents = '';
         card.removeAttribute('aria-hidden');
         card.classList.remove('is-active', 'is-near');
-        card._pickActive = card._pickNear = card._pickHidden = undefined;
+        card._pickActive = card._pickNear = card._pickHidden = card._pickBlurred = undefined;
+        card._burstOwn = 0;
         const photoImg = ensurePhotoImg(card);
         if (photoImg) photoImg.style.transform = '';
       });
