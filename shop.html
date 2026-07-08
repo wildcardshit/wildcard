@@ -963,20 +963,38 @@
     display:flex;
     flex-direction:column;
     height:100%;
+    position:relative;
+    z-index:1;
   }
-  .deck__tile:hover{
+  .deck__tile:hover,
+  .deck__tile.is-tapped{
     transform:translateY(-6px);
     box-shadow:8px 10px 0 var(--ink);
+    z-index:6;
   }
   .deck__art{
     width:100%;
     aspect-ratio:1/1;
     margin:0 auto 12px;
     border-radius:10px;
-    border:2px solid var(--ink);
-    overflow:hidden;
+    overflow:visible;
+    position:relative;
   }
-  .deck__art img{ width:100%; height:100%; object-fit:cover; }
+  .deck__art img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    border-radius:10px;
+    display:block;
+    position:relative;
+    transition:transform .5s cubic-bezier(.16,1,.3,1), filter .5s cubic-bezier(.16,1,.3,1);
+  }
+  .deck__tile:hover .deck__art img,
+  .deck__tile:focus-within .deck__art img,
+  .deck__tile.is-tapped .deck__art img{
+    transform:scale(1.4);
+    filter:drop-shadow(0 16px 22px rgba(0,0,0,0.35));
+  }
   .deck__suit{ font-size:1.4rem; margin:4px 0 0; }
   .deck__name{
     font-family:var(--font-display);
@@ -1914,6 +1932,23 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     btn.classList.remove('is-popping');
     void btn.offsetWidth; // restart animation on repeat clicks
     btn.classList.add('is-popping');
+  });
+
+  // Tap-to-expand: on touch devices (or any device without real hover),
+  // tapping a shirt card pops its artwork out the same way :hover does
+  // on desktop. Tapping elsewhere (or another card) clears it.
+  shopGrid.addEventListener('click', (e) => {
+    const tile = e.target.closest('.deck__tile');
+    if (!tile) return;
+    document.querySelectorAll('.deck__tile.is-tapped').forEach(t => {
+      if (t !== tile) t.classList.remove('is-tapped');
+    });
+    if (e.target.closest('.btn--hand')) return; // let the add-to-hand click through untouched
+    tile.classList.toggle('is-tapped');
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('#shopGrid')) return;
+    document.querySelectorAll('.deck__tile.is-tapped').forEach(t => t.classList.remove('is-tapped'));
   });
 
   // Marquee content (duplicated for seamless loop)
