@@ -158,6 +158,11 @@
     top:0;
     z-index:100;
     transition:padding .35s cubic-bezier(.4,0,.2,1), box-shadow .35s ease, border-color .35s ease;
+    /* Fix: sticky + backdrop-filter can make Safari randomly drop content
+       (e.g. the logo) from repaint on scroll. Forcing a stable compositor
+       layer here prevents that. */
+    transform:translateZ(0);
+    will-change:transform;
   }
   .site-header.is-scrolled{
     padding:12px 28px;
@@ -201,6 +206,8 @@
     width:auto;
     display:block;
     transition:height .35s cubic-bezier(.4,0,.2,1), transform .25s ease, filter .25s ease;
+    transform:translateZ(0);
+    backface-visibility:hidden;
   }
   .site-header__logo:hover img{
     transform:scale(1.045);
