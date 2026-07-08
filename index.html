@@ -1536,15 +1536,15 @@
     .pick__card{
       position:absolute;
       left:50%;
-      top:auto;
-      bottom:0;
+      top:50%;
+      bottom:auto;
       width:min(58vw,190px);
       margin:0;
       padding:11px 11px 13px;
       border-radius:18px;
-      transform-origin:50% 108%;
+      transform-origin:50% 50%;
       /* Only transform/opacity are touched every animation frame (both are
-         compositor-only, so the fan can glide at a steady 60/120fps without
+         compositor-only, so the slide can glide at a steady 60/120fps without
          forcing layout or paint work). Depth cues below are class-driven
          and cross-fade on their own CSS transition instead. */
       transition:box-shadow .45s cubic-bezier(.22,1,.36,1), filter .45s cubic-bezier(.22,1,.36,1);
@@ -1565,9 +1565,24 @@
       cursor:default;
       filter:none;
       box-shadow:
-        0 26px 54px rgba(22,20,15,0.28),
+        0 8px 16px rgba(22,20,15,0.22),
+        0 46px 70px -16px rgba(22,20,15,0.5),
+        0 20px 34px -10px rgba(22,20,15,0.35),
         0 0 0 3px rgba(var(--accent-rgb,22,20,15), 0.9),
-        0 0 32px 4px rgba(var(--accent-rgb,22,20,15), 0.34);
+        0 0 46px 8px rgba(var(--accent-rgb,22,20,15), 0.4);
+    }
+    /* The photo's own scale/position is driven by JS every animation
+       frame (see the fan controller below) so it can grow continuously
+       as the card approaches center and briefly overshoot on arrival.
+       A CSS transition on transform here would fight that per-frame
+       update and make it feel laggy, so only filter is allowed to
+       transition smoothly; the drop-shadow deepens as the shirt grows,
+       reinforcing the sense that it's coming toward the viewer. */
+    .pick__hand .pick__card .pick__photo img{
+      transition: filter .45s ease;
+    }
+    .pick__hand .pick__card.is-active .pick__photo img{
+      filter: drop-shadow(0 26px 30px rgba(0,0,0,0.4)) drop-shadow(0 8px 10px rgba(0,0,0,0.28));
     }
     .pick__card:hover, .pick__card:focus-within{
       transform:none;
@@ -1985,6 +2000,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     let activeIndex = 0;
     let velocity = 0;         // px per ms from the most recent drag
     let cardStep = 90;        // px of drag == one full card index
+    let cardSpacing = 110;    // px between neighboring card centers when laid out flat
     let dragging = false;
     let axisLocked = null;    // 'x' | 'y' | null
     let startX = 0, startY = 0, startPosition = 0, lastX = 0, lastT = 0;
@@ -2041,48 +2057,79 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       return card._sig;
     }
 
+    // Cache each card's shirt <img> so we don't re-query the DOM every
+    // animation frame. Its scale is driven independently of the card's
+    // own transform so the shirt can grow past the card edges and
+    // overshoot on arrival without fighting the card's own slide.
+    function ensurePhotoImg(card){
+      if (card._photoImg === undefined){
+        card._photoImg = card.querySelector('.pick__photo img');
+      }
+      return card._photoImg;
+    }
+
     function render(pos, energy){
       energy = energy || 0;
       cards.forEach((card, i) => {
         const offset = wrappedOffset(i, pos);
         const abs = Math.abs(offset);
-        const clamped = clamp(offset, -2.4, 2.4);
         const isActive = abs < 0.18;
-        // Active card gets an extra size boost on top of the normal falloff curve,
-        // so the selected card reads as clearly "chosen" rather than just centered —
-        // it floats up and enlarges above the rest of the hand.
-        const baseScale = clamp(1 - abs * 0.1, 0.62, 1);
+        // Cards sit on a single flat line and slide sideways past each
+        // other, like a hand dealing cards across a table — no fan curve,
+        // no upward lift, no 3D tilt.
+        const baseScale = clamp(1 - abs * 0.16, 0.6, 1);
         const activeBoost = 1 + 0.08 * clamp(1 - abs / 0.18, 0, 1);
         const scale = isActive ? baseScale * activeBoost : baseScale;
-        let tx = offset * 46;
-        let ty = Math.min(abs * 20, 60);
-        let tz = -Math.min(abs * 46, 180);
-        let rotZ = clamped * 11;
-        let rotY = clamp(offset * -3.4, -14, 14);
-        const opacity = clamp(1 - Math.max(0, abs - 1.7) * 1.3, 0, 1);
 
-        // "Explosion" burst: a decaying energy value handed in from the
+        // Neighbor "scatter": cards immediately next to whichever card is
+        // nearing center get pushed extra distance apart — peaks right at
+        // the immediate-neighbor spot (abs === 1) and fades out for cards
+        // further away — so the deck visibly parts to make room for the
+        // hero instead of just holding a fixed spacing.
+        const neighborPush = clamp(1 - Math.abs(abs - 1) * 1.5, 0, 1);
+        const scatterPx = cardSpacing * 0.55;
+        let tx = offset * cardSpacing;
+        if (abs > 0.001){
+          tx += (offset / abs) * neighborPush * scatterPx;
+        }
+        let ty = 0;
+        const opacity = clamp(1 - Math.max(0, abs - 2.2) * 1.3, 0, 1);
+
+        // "Slide" burst: a decaying energy value handed in from the
         // spring, scaled per-card by that card's own signature and by how
-        // far it sits from the new center (outer cards fling further, like
-        // cards scattering off a deck) — then it decays back to 0 as the
-        // spring settles, so the hand always regroups into the same tidy
-        // fan no matter how hard it was flicked.
+        // far it sits from the new center (outer cards slide further, like
+        // cards scattering across a tabletop) — then it decays back to 0
+        // as the spring settles, so the row always regroups into the same
+        // tidy line no matter how hard it was flicked.
         if (energy > 0.001){
           const sig = ensureSignature(card);
           const spread = 0.35 + abs * 0.65;
           const burst = energy * spread;
-          tx += sig.x * burst * 50;
-          ty += sig.y * burst * -78;
-          tz += sig.z * burst * 170;
-          rotZ += sig.rot * burst * 55;
-          rotY += sig.spin * burst * 30;
+          tx += sig.x * burst * 70;
+          ty += sig.y * burst * 14; // faint table-friction wobble only
+        }
+
+        // The shirt itself grows continuously as its card nears center —
+        // not a subtle hover pop, but a real 40-60% blow-up that peaks
+        // when the card is dead center — and gets a brief overshoot/bounce
+        // from the same decaying spring energy right as it lands, so the
+        // hero moment reads as "arriving" rather than just appearing.
+        const heroCloseness = clamp(1 - abs, 0, 1);
+        const heroOvershoot = energy > 0.001 ? energy * heroCloseness * 1.4 : 0;
+        const heroScale = 1 + 0.55 * heroCloseness + heroOvershoot;
+        // Push the hero toward the viewer through the hand's perspective,
+        // reinforcing the "coming at you" feel from the deeper shadow.
+        const heroZ = 55 * heroCloseness;
+        const photoImg = ensurePhotoImg(card);
+        if (photoImg){
+          photoImg.style.transform = `scale(${heroScale}) translateZ(${heroZ}px)`;
         }
 
         // transform + opacity are the only two properties touched every
         // frame — both are compositor-only (no layout, no paint), which is
-        // what keeps the fan gliding smoothly instead of feeling choppy.
+        // what keeps the slide gliding smoothly instead of feeling choppy.
         card.style.transform =
-          `translateX(-50%) translate3d(${tx}px, ${ty}px, ${tz}px) rotateZ(${rotZ}deg) rotateY(${rotY}deg) scale(${scale})`;
+          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
         card.style.zIndex = String(Math.round(1000 - abs * 10));
         card.style.opacity = String(opacity);
 
@@ -2120,6 +2167,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
 
     function updateStep(){
       cardStep = clamp(pickHand.clientWidth * 0.34, 70, 150);
+      cardSpacing = clamp(pickHand.clientWidth * 0.4, 90, 175);
     }
 
     function stopAnimation(){
@@ -2322,6 +2370,8 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         card.removeAttribute('aria-hidden');
         card.classList.remove('is-active', 'is-near');
         card._pickActive = card._pickNear = card._pickHidden = undefined;
+        const photoImg = ensurePhotoImg(card);
+        if (photoImg) photoImg.style.transform = '';
       });
       if (dotsEl){ dotsEl.remove(); dotsEl = null; }
       if (glowEl){ glowEl.remove(); glowEl = null; }
