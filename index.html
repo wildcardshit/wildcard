@@ -1683,8 +1683,19 @@
      cleanly above the fold; the paragraph gets a hairline rule and a
      generous gap so it clearly reads as separate, below-the-fold content
      rather than crowding the buttons above it. */
+  /* Cards inside .pick__hand deliberately use overflow:visible so the
+     fan/burst effect can bleed past its own box — but with nothing
+     between it and <body> to contain that bleed, the widest flick pushes
+     .pick__card well past the actual screen edge and iOS Safari picks
+     that up as real horizontal scroll (rubber-band drag), even though
+     body has overflow-x:hidden — a known WebKit quirk where that
+     propagation isn't reliable several levels deep through transforms.
+     Clipping here, at the section that spans the true viewport width,
+     stops the drag without trimming anything that was actually visible:
+     content beyond this edge was already off-screen. */
   .pick{
     padding:16px 0 40px;
+    overflow-x:hidden;
   }
   .pick__head{
     margin-bottom:8px;
@@ -2004,6 +2015,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
     let dragging = false;
     let axisLocked = null;    // 'x' | 'y' | null
     let startX = 0, startY = 0, startPosition = 0, lastX = 0, lastT = 0;
+    let liveSpeedSmoothed = 0; // real-time drag speed (0..1), smoothed frame to frame
     let rafId = null;
     let dotsEl = null;
     let glowEl = null;
@@ -2073,9 +2085,17 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       return card._photoImg;
     }
 
-    function render(pos, energy, dt){
+    function render(pos, energy, dt, liveSpeed){
       energy = clamp(energy || 0, 0, 1);
       dt = dt || 0;
+      // liveSpeed is the *current*, real-time drag speed (0..1) — separate
+      // from `energy`, which only ever fires once, on release. liveSpeed is
+      // what lets the deck react while the finger is still moving: a slow
+      // drag sits near 0 and the cards just fan gently; a medium-speed drag
+      // pushes it up and the cards start weaving over/under one another;
+      // a fast flick rides it briefly on the way up before release hands
+      // off to the burst-apart physics below.
+      liveSpeed = clamp(liveSpeed || 0, 0, 1);
       cards.forEach((card, i) => {
         const offset = wrappedOffset(i, pos);
         const abs = Math.abs(offset);
@@ -2086,7 +2106,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         // a living deck the instant it gets flicked.
         const baseScale = clamp(1 - abs * 0.16, 0.6, 1);
         const activeBoost = 1 + 0.08 * clamp(1 - abs / 0.18, 0, 1);
-        const scale = isActive ? baseScale * activeBoost : baseScale;
+        let scale = isActive ? baseScale * activeBoost : baseScale;
 
         // Neighbor "scatter": cards immediately next to whichever card is
         // nearing center get pushed extra distance apart — peaks right at
@@ -2101,6 +2121,25 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         }
         let ty = 0;
         let opacity = clamp(1 - Math.max(0, abs - 2.2) * 1.3, 0, 1);
+
+        // ---------- Speed-reactive "fan" + "weave" (live, pre-release) ----------
+        // A gentle, constant fan angle keys off each card's offset alone —
+        // this is what a slow, careful swipe reveals: the hand gently
+        // fanning open, like spreading cards on a table.
+        const fanRot = clamp(offset, -2.6, 2.6) * 8.5;
+
+        // As drag speed climbs into the medium range, alternating cards lift
+        // and dip out of the flat line and nudge past each other — a woven
+        // over/under motion rather than a straight slide. It fades out for
+        // cards far from center (only the middle of the deck weaves) and
+        // eases back out again at very high speed, where the burst-apart
+        // physics on release should read as the dominant motion instead.
+        const weaveGate = clamp(liveSpeed, 0, 1) * clamp(1.3 - liveSpeed, 0, 1);
+        const weaveEnvelope = clamp(1 - abs / 2.3, 0, 1) * weaveGate;
+        const weaveParity = (i % 2 === 0) ? 1 : -1;
+        ty += weaveParity * weaveEnvelope * 22;
+        tx += weaveParity * weaveEnvelope * 9;
+        scale *= 1 + weaveEnvelope * 0.05;
 
         // ---------- "Living deck" burst-apart physics ----------
         // Rather than every card obeying the same decaying energy value on
@@ -2167,9 +2206,17 @@ const IMG_YELLOW = "images/yellow-shirt.png";
         // transform + opacity (+ filter while airborne) are the only
         // properties touched every frame — all compositor-only, which is
         // what keeps the burst gliding smoothly instead of feeling choppy.
+        // Weave rotation eases out as the burst takes hold, so a flick's
+        // rotation reads as one continuous motion (weave → tumble) instead
+        // of two systems fighting for the card's angle.
+        const weaveRot = weaveParity * weaveEnvelope * 11 * (1 - kick);
+        const totalRot = fanRot + weaveRot + burstRot;
         card.style.transform =
-          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, ${burstZ.toFixed(1)}px) rotate(${burstRot.toFixed(2)}deg) scale(${(scale * burstScale).toFixed(3)})`;
-        card.style.zIndex = String(Math.round(1000 - abs * 10 + kick * 5));
+          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, ${burstZ.toFixed(1)}px) rotate(${totalRot.toFixed(2)}deg) scale(${(scale * burstScale).toFixed(3)})`;
+        // Alternating cards weaving past each other need to visibly swap
+        // which one is on top — nudge z-index by weave parity so the
+        // over/under motion actually reads instead of just wobbling in place.
+        card.style.zIndex = String(Math.round(1000 - abs * 10 + kick * 5 + weaveParity * weaveEnvelope * 3));
         card.style.opacity = String(opacity);
 
         const blurred = kick > 0.02;
@@ -2298,6 +2345,7 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       startPosition = position;
       lastX = e.clientX; lastT = performance.now();
       velocity = 0;
+      liveSpeedSmoothed = 0;
       stopAnimation();
       pickHand.classList.add('is-dragging');
       try { pickHand.setPointerCapture(e.pointerId); } catch(err){}
@@ -2321,13 +2369,20 @@ const IMG_YELLOW = "images/yellow-shirt.png";
       // infinitely through the same 5 cards, so dragging past "card 5"
       // just keeps cutting back around to card 1, like a real deck.
       position = startPosition - dx / cardStep;
-      render(position, 0);
       const now = performance.now();
       const dt = now - lastT;
       if (dt > 4){
         velocity = (e.clientX - lastX) / dt;
         lastX = e.clientX; lastT = now;
+        // Smooth the instantaneous speed so a single noisy touch sample
+        // doesn't make the weave flicker — this is the live progression
+        // the person actually feels while dragging: slow drag stays near
+        // 0 (gentle fan only), a purposeful medium swipe rides up into the
+        // weave range, and a hard flick blows past it toward release.
+        const instSpeed = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+        liveSpeedSmoothed = lerp(liveSpeedSmoothed, instSpeed, 0.4);
       }
+      render(position, 0, 0, liveSpeedSmoothed);
     }
 
     // Speed (in px/ms) above which a release counts as a "full" flick —
