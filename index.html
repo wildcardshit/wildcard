@@ -725,6 +725,11 @@
   .marquee__track{
     display:inline-flex;
     animation:scrollLeft 22s linear infinite;
+    will-change:transform;
+    -webkit-backface-visibility:hidden;
+    backface-visibility:hidden;
+    -webkit-transform:translate3d(0,0,0);
+    transform:translate3d(0,0,0);
   }
   .marquee--ink .marquee__track{ animation:scrollLeft 26s linear infinite reverse; }
   .marquee__item{
@@ -742,8 +747,8 @@
   .marquee__item .pip{ color:var(--gold); font-size:1.1rem; }
 
   @keyframes scrollLeft{
-    from{ transform:translateX(0); }
-    to{ transform:translateX(-50%); }
+    from{ transform:translate3d(0,0,0); }
+    to{ transform:translate3d(-50%,0,0); }
   }
 
   /* ---------- BLEED TEXT (oversized, runs off both edges) ---------- */
@@ -1823,9 +1828,11 @@
     </div>
   </section>
 
-  <div class="marquee marquee--felt reveal" style="--d:0">
-    <div class="marquee__track" id="marquee1">
-      <!-- duplicated via JS for seamless loop -->
+  <div class="reveal" style="--d:0">
+    <div class="marquee marquee--felt">
+      <div class="marquee__track" id="marquee1">
+        <!-- duplicated via JS for seamless loop -->
+      </div>
     </div>
   </div>
 
