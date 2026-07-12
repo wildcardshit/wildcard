@@ -1501,6 +1501,7 @@
   .support-strip__email:hover{ color:var(--wild-red); }
 
   /* ---------- RESPONSIVE ---------- */
+  .footer-shop-mobile{ display:none; }
   @media (max-width: 900px){
     .hero{ padding:46px 0 30px; min-height:0; display:block; }
     .hero__grid{ grid-template-columns:1fr; gap:42px; }
@@ -1508,6 +1509,8 @@
     .deck__grid{ grid-template-columns:repeat(2, 1fr); }
     .join__grid{ grid-template-columns:1fr; }
     .site-header__nav{ display:none; }
+    .footer-shop-desktop{ display:none; }
+    .footer-shop-mobile{ display:inline; }
     .hamburger-btn{ display:flex; }
     .site-header__icons{ gap:12px; }
     .icon-btn--login{ display:none; }
@@ -1855,7 +1858,8 @@
 
         <nav class="site-footer__col reveal" style="--d:1">
           <p class="site-footer__heading">Shop</p>
-          <a href="index.html#shop">The Collection</a>
+          <a href="home.html#shop" class="footer-shop-desktop">The Collection</a>
+          <a href="shop.html" class="footer-shop-mobile">The Collection</a>
           <a href="lookbook.html">Lookbook</a>
           <a href="contact.html">Contact</a>
         </nav>
