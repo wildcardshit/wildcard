@@ -561,8 +561,11 @@
     text-underline-offset:2px;
   }
 
+  .footer-shop-mobile{ display:none; }
   @media (max-width: 900px){
     .contact{ grid-template-columns:1fr; gap:36px; }
+    .footer-shop-desktop{ display:none; }
+    .footer-shop-mobile{ display:inline; }
   }
   @media (max-width: 560px){
     .field-row{ grid-template-columns:1fr; }
@@ -907,7 +910,8 @@
 
         <nav class="site-footer__col reveal" style="--d:1">
           <p class="site-footer__heading">Shop</p>
-          <a href="index.html#shop">The Collection</a>
+          <a href="home.html#shop" class="footer-shop-desktop">The Collection</a>
+          <a href="shop.html" class="footer-shop-mobile">The Collection</a>
           <a href="lookbook.html">Lookbook</a>
           <a href="contact.html" class="is-current">Contact</a>
         </nav>
