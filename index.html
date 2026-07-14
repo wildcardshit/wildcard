@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WILDCARD | Admin Dashboard</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/x-icon" href="../images/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FFFFFF;
+    --paper-dim:#F5F3EF;
+    --ink:#16140F;
+    --ink-soft:rgba(22,20,15,0.62);
+    --felt:#EB181D;
+    --felt-dark:#A91F1F;
+    --gold:#C9A227;
+    --green:#2F6F4E;
+    --line:#E4DFD5;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--paper-dim); color:var(--ink); font-family:'Inter', sans-serif; }
+  mono{ font-family:'Space Mono', monospace; }
+
+  header.topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 28px; background:var(--ink); color:var(--paper);
+    position:sticky; top:0; z-index:10;
+  }
+  .brand{ font-family:'Anton', sans-serif; letter-spacing:0.03em; font-size:20px; margin:0; }
+  .brand span{ color:var(--felt); }
+  .who{ display:flex; align-items:center; gap:14px; font-size:13px; color:rgba(255,255,255,0.75); }
+  .who b{ color:var(--paper); }
+  #logoutBtn{
+    background:transparent; border:1px solid rgba(255,255,255,0.35); color:var(--paper);
+    padding:7px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-family:'Inter', sans-serif;
+  }
+  #logoutBtn:hover{ background:rgba(255,255,255,0.1); }
+
+  .tabs{
+    display:flex; gap:4px; padding:0 28px; background:var(--paper); border-bottom:1px solid var(--line);
+    position:sticky; top:57px; z-index:9; overflow-x:auto;
+  }
+  .tab{
+    padding:14px 18px; font-size:14px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+    border-bottom:3px solid transparent; white-space:nowrap;
+  }
+  .tab.active{ color:var(--ink); border-bottom-color:var(--felt); }
+
+  main{ max-width:1180px; margin:0 auto; padding:28px; }
+  .panel{ display:none; }
+  .panel.active{ display:block; }
+
+  .toolbar{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:18px; }
+  .toolbar input[type="text"], .toolbar select{
+    padding:9px 12px; border:1.5px solid var(--line); border-radius:7px; font-size:14px;
+    font-family:'Inter', sans-serif; background:var(--paper);
+  }
+  .toolbar input[type="text"]{ min-width:220px; flex:1; }
+  .spacer{ flex:1; }
+  .count{ font-size:13px; color:var(--ink-soft); }
+
+  .card{ background:var(--paper); border-radius:10px; border:1px solid var(--line); overflow:hidden; }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  th{
+    text-align:left; padding:11px 14px; background:var(--paper-dim); color:var(--ink-soft);
+    font-size:11.5px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700;
+    border-bottom:1px solid var(--line);
+  }
+  td{ padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td{ border-bottom:none; }
+  tr.order-row:hover{ background:#FAFAF8; }
+
+  .badge{
+    display:inline-block; padding:3px 9px; border-radius:99px; font-size:11.5px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.03em;
+  }
+  .badge--shipped{ background:#E7F3EC; color:var(--green); }
+  .badge--pending{ background:#FDF2E3; color:#96660E; }
+  .badge--low{ background:#FDEDED; color:var(--felt-dark); }
+  .badge--ok{ background:#EEF1EC; color:var(--ink-soft); }
+
+  .btn{
+    padding:7px 13px; border-radius:6px; font-size:12.5px; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--paper); color:var(--ink);
+  }
+  .btn:hover{ background:var(--paper-dim); }
+  .btn--primary{ background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  .btn--primary:hover{ background:#000; }
+  .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+
+  .items-list{ font-size:12.5px; color:var(--ink-soft); }
+  .items-list div{ margin-bottom:2px; }
+
+  .fulfill-row{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; }
+  .fulfill-row input{
+    padding:6px 9px; border:1.5px solid var(--line); border-radius:6px; font-size:12.5px; width:110px;
+  }
+
+  .stock-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px; }
+  .stock-card{ background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .stock-card h3{ margin:0 0 10px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  .swatch{ width:14px; height:14px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.15); }
+  .stock-row{ display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-top:1px solid var(--paper-dim); }
+  .stock-row:first-of-type{ border-top:none; }
+  .stock-row label{ font-size:12.5px; color:var(--ink-soft); font-family:'Space Mono', monospace; }
+  .stock-row .edit{ display:flex; align-items:center; gap:6px; }
+  .stock-row input{ width:60px; padding:5px 7px; border:1.5px solid var(--line); border-radius:6px; font-size:13px; }
+  .stock-row .save{ font-size:11.5px; padding:5px 9px; }
+
+  .empty{ padding:40px 20px; text-align:center; color:var(--ink-soft); font-size:14px; }
+  .loading{ padding:40px 20px; text-align:center; color:var(--ink-soft); font-size:14px; }
+  .toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); padding:11px 20px; border-radius:8px; font-size:13.5px;
+    box-shadow:0 12px 30px rgba(0,0,0,0.25); z-index:100; opacity:0; pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(-6px); }
+  .toast.error{ background:var(--felt-dark); }
+
+  address{ font-style:normal; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <p class="brand">WILDCARD <span>ADMIN</span></p>
+  <div class="who">
+    <span>Signed in as <b id="whoUser">…</b></span>
+    <button id="logoutBtn" type="button">Log out</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <div class="tab active" data-tab="orders">Orders</div>
+  <div class="tab" data-tab="inventory">Inventory</div>
+  <div class="tab" data-tab="customers">Customers</div>
+</nav>
+
+<main>
+
+  <!-- ORDERS -->
+  <section class="panel active" id="panel-orders">
+    <div class="toolbar">
+      <input type="text" id="orderSearch" placeholder="Search order #, name, or email…">
+      <select id="orderStatus">
+        <option value="all">All statuses</option>
+        <option value="unfulfilled">Unshipped</option>
+        <option value="fulfilled">Shipped</option>
+      </select>
+      <div class="spacer"></div>
+      <span class="count" id="orderCount"></span>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:14%">Order</th>
+            <th style="width:12%">Date</th>
+            <th style="width:20%">Customer</th>
+            <th style="width:24%">Items</th>
+            <th style="width:10%">Total</th>
+            <th style="width:10%">Status</th>
+            <th style="width:10%">Action</th>
+          </tr>
+        </thead>
+        <tbody id="ordersBody">
+          <tr><td colspan="7" class="loading">Loading orders…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- INVENTORY -->
+  <section class="panel" id="panel-inventory">
+    <div class="toolbar">
+      <span class="count">Adjust stock per size. Changes save immediately and take effect on the storefront right away.</span>
+    </div>
+    <div class="stock-grid" id="stockGrid">
+      <div class="loading">Loading inventory…</div>
+    </div>
+  </section>
+
+  <!-- CUSTOMERS -->
+  <section class="panel" id="panel-customers">
+    <div class="toolbar">
+      <input type="text" id="customerSearch" placeholder="Search name or email…">
+      <div class="spacer"></div>
+      <span class="count" id="customerCount"></span>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:22%">Customer</th>
+            <th style="width:28%">Shipping Address</th>
+            <th style="width:12%">Orders</th>
+            <th style="width:14%">Lifetime Spend</th>
+            <th style="width:12%">Last Order</th>
+          </tr>
+        </thead>
+        <tbody id="customersBody">
+          <tr><td colspan="5" class="loading">Loading customers…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/dashboard.js"></script>
+</body>
+</html>
