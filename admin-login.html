@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WILDCARD | Admin Sign In</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/x-icon" href="images/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FFFFFF;
+    --paper-dim:#F5F3EF;
+    --ink:#16140F;
+    --ink-soft:rgba(22,20,15,0.62);
+    --felt:#EB181D;
+    --felt-dark:#A91F1F;
+    --gold:#C9A227;
+    --line:#E4DFD5;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; min-height:100%;
+    background:var(--paper-dim); color:var(--ink);
+    font-family:'Inter', sans-serif;
+  }
+  .wrap{
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card{
+    width:100%; max-width:380px; background:var(--paper);
+    border-radius:14px; padding:40px 34px;
+    box-shadow:0 24px 60px rgba(22,20,15,0.12);
+    border-top:4px solid var(--felt);
+  }
+  .brand{
+    font-family:'Anton', sans-serif; letter-spacing:0.03em; font-size:30px;
+    text-align:center; margin:4px 0 4px;
+  }
+  .sub{
+    text-align:center; font-size:12px; color:var(--ink-soft); margin:0 0 30px;
+    font-family:'Space Mono', monospace; text-transform:uppercase; letter-spacing:0.12em;
+  }
+  label{ display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
+  input{
+    width:100%; padding:12px 14px; border:1.5px solid var(--line); border-radius:8px;
+    font-size:15px; font-family:'Inter', sans-serif; margin-bottom:18px; background:var(--paper-dim);
+    color:var(--ink);
+  }
+  input:focus{ outline:none; border-color:var(--felt); background:var(--paper); }
+  button{
+    width:100%; padding:13px; border:none; border-radius:8px; background:var(--ink);
+    color:var(--paper); font-size:15px; font-weight:600; cursor:pointer;
+    transition:background .15s ease;
+  }
+  button:hover{ background:#000; }
+  button:disabled{ opacity:0.6; cursor:not-allowed; }
+  .error{
+    background:#FDEDED; border:1px solid #F4C7C7; color:var(--felt-dark);
+    font-size:13px; padding:10px 12px; border-radius:8px; margin:-4px 0 18px; display:none;
+  }
+  .error.show{ display:block; }
+  .foot{ text-align:center; margin-top:24px; font-size:12px; color:var(--ink-soft); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <p class="brand">WILDCARD</p>
+    <p class="sub">Admin Sign In</p>
+    <div class="error" id="error" role="alert"></div>
+    <form id="loginForm" autocomplete="off">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit" id="submitBtn">Sign In</button>
+    </form>
+    <p class="foot">Authorized personnel only.</p>
+  </div>
+</div>
+<script>
+(function () {
+  var form = document.getElementById('loginForm');
+  var errorBox = document.getElementById('error');
+  var btn = document.getElementById('submitBtn');
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.classList.add('show');
+  }
+
+  // Only ever redirect to a same-site /admin/ path from the "next" query
+  // param — never trust it as an arbitrary redirect target.
+  function safeNextPath() {
+    var params = new URLSearchParams(window.location.search);
+    var next = params.get('next');
+    if (next && next.indexOf('/admin/') === 0 && next.indexOf('//') !== 0) {
+      return next;
+    }
+    return '/admin/index.html';
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    errorBox.classList.remove('show');
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+
+    var username = document.getElementById('username').value;
+    var password = document.getElementById('password').value;
+
+    fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function (result) {
+        if (!result.ok) {
+          showError((result.data && result.data.error) || 'Sign in failed.');
+          btn.disabled = false;
+          btn.textContent = 'Sign In';
+          return;
+        }
+        window.location.href = safeNextPath();
+      })
+      .catch(function () {
+        showError('Could not reach the server. Please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      });
+  });
+})();
+</script>
+</body>
+</html>
