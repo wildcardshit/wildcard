@@ -1,0 +1,2734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+<title>WILDCARD | Home</title>
+<meta name="description" content="WILDCARD is a premium streetwear brand where every drop tells a story. Explore the latest collection and choose your card.">
+<link rel="canonical" href="https://wildcardshit.com/home.html">
+
+<!-- Favicon / browser appearance -->
+<link rel="icon" type="image/x-icon" href="images/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="192x192" href="images/android-chrome-192x192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="images/android-chrome-512x512.png">
+<link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
+<meta name="theme-color" content="#F0261B">
+
+<!-- Social sharing (Open Graph / Twitter) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WILDCARD">
+<meta property="og:title" content="WILDCARD | Home">
+<meta property="og:description" content="WILDCARD is a premium streetwear brand where every drop tells a story. Explore the latest collection and choose your card.">
+<meta property="og:url" content="https://wildcardshit.com/home.html">
+<meta property="og:image" content="https://wildcardshit.com/images/og-share.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WILDCARD | Home">
+<meta name="twitter:description" content="WILDCARD is a premium streetwear brand where every drop tells a story. Explore the latest collection and choose your card.">
+<meta name="twitter:image" content="https://wildcardshit.com/images/og-share.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;800&family=Space+Mono:wght@400;700&family=Caveat:wght@600;700&family=Permanent+Marker&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#FFFFFF;
+    --paper-dim:#F0F0F0;
+    --ink:#16140F;
+    --felt:#EB181D;
+    --felt-dark:#A91F1F;
+    --wild-red:#EB181D;
+    --wild-red-dark:#A91F1F;
+    --gold:#C9A227;
+    --c-green:#2F6F4E;
+    --c-blue:#2456C7;
+    --c-yellow:#E8B92F;
+    --c-red:#D62828;
+    --c-black:#16140F;
+    --font-display:'Anton', sans-serif;
+    --font-body:'Inter', sans-serif;
+    --font-mono:'Space Mono', monospace;
+    --font-hand:'Caveat', cursive;
+    --font-graffiti:'Permanent Marker', cursive;
+    --radius-card:24px;
+    --container:1180px;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    position:relative;
+    touch-action:pan-y;
+    overscroll-behavior-y:none;
+  }
+
+  /* ---------- GLOBAL W WATERMARK LAYER ---------- */
+  .site-ws{
+    position:absolute;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    pointer-events:none;
+    z-index:0;
+    overflow:hidden;
+  }
+  .site-ws__w{
+    position:absolute;
+    font-family:var(--font-display);
+    font-style:normal;
+    font-weight:900;
+    line-height:1;
+    opacity:0.045;
+    user-select:none;
+    pointer-events:none;
+  }
+  /* ensure all page content sits above the global W layer */
+  body > *:not(.site-ws){ position:relative; z-index:1; }
+  /* On mobile, hide the secondary Ws to keep things clean */
+  @media (max-width: 600px) {
+    .site-ws__w--hide-mobile { display: none; }
+  }
+
+  /* ---------- FILM GRAIN + VIGNETTE ---------- */
+  /* Extremely subtle full-viewport texture and edge-darkening for a
+     premium, editorial-print feel. Sits in the same background layer
+     as the W watermark (z-index:0), stays fixed to the viewport so it
+     reads as a lens/paper texture rather than scrolling document content,
+     and never intercepts clicks. */
+  body::before{
+    content:'';
+    position:fixed;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    opacity:0.05;
+    mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat:repeat;
+    background-size:180px 180px;
+  }
+  body::after{
+    content:'';
+    position:fixed;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    background:radial-gradient(ellipse at 50% 45%, rgba(22,20,15,0) 48%, rgba(22,20,15,0.05) 82%, rgba(22,20,15,0.11) 100%);
+  }
+
+  img,svg{display:block;max-width:100%;}
+  a{color:inherit;text-decoration:none;}
+  button{font-family:inherit;cursor:pointer;border:none;}
+  ::selection{background:var(--wild-red);color:var(--paper);}
+
+  :focus-visible{
+    outline:3px solid var(--gold);
+    outline-offset:3px;
+  }
+
+  .wrap{
+    max-width:var(--container);
+    margin:0 auto;
+    padding:0 28px;
+  }
+
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    color:var(--wild-red);
+    font-weight:700;
+  }
+
+  .btn{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    padding:14px 26px;
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:0.85rem;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    border-radius:4px;
+    transition:transform .15s ease, background .15s ease, color .15s ease;
+  }
+  .btn--primary{ background:var(--wild-red); color:var(--paper); }
+  .btn--primary:hover{ background:var(--wild-red-dark); transform:translateY(-2px); }
+  .btn--dark{ background:var(--ink); color:var(--paper); }
+  .btn--dark:hover{ background:#000; transform:translateY(-2px); }
+  .btn--small{ padding:10px 16px; font-size:0.72rem; background:var(--ink); color:var(--paper); }
+  .btn--small:hover{ background:var(--wild-red); }
+  .btn--outline{ background:transparent; color:var(--paper); border:2px solid var(--paper); }
+  .btn--outline:hover{ background:var(--paper); color:var(--felt); }
+
+  /* ---------- HEADER ---------- */
+  .site-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:24px 28px;
+    border-bottom:2px solid var(--ink);
+    background:rgba(255,255,255,0.92);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    position:sticky;
+    top:0;
+    z-index:100;
+    transition:padding .35s cubic-bezier(.4,0,.2,1), box-shadow .35s ease, border-color .35s ease;
+    /* Fix: sticky + backdrop-filter can make Safari randomly drop content
+       (e.g. the logo) from repaint on scroll. Forcing a stable compositor
+       layer here prevents that. */
+    transform:translateZ(0);
+    will-change:transform;
+  }
+  .site-header.is-scrolled{
+    padding:12px 28px;
+    box-shadow:0 8px 24px rgba(22,20,15,0.08);
+    border-bottom-color:rgba(22,20,15,0.14);
+  }
+  .site-header__nav{
+    display:flex;
+    gap:40px;
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    font-weight:700;
+  }
+  .site-header__nav a{
+    position:relative;
+    padding-bottom:6px;
+    transition:color .25s ease;
+  }
+  .site-header__nav a::after{
+    content:'';
+    position:absolute;
+    left:0;
+    bottom:0;
+    width:100%;
+    height:2px;
+    background:var(--wild-red);
+    transform:scaleX(0);
+    transform-origin:left;
+    transition:transform .3s cubic-bezier(.4,0,.2,1);
+  }
+  .site-header__nav a:hover{ color:var(--wild-red); }
+  .site-header__nav a:hover::after{ transform:scaleX(1); }
+  .site-header__logo{
+    display:flex;
+    align-items:center;
+  }
+  .site-header__logo img{
+    height:68px;
+    width:auto;
+    display:block;
+    transition:height .35s cubic-bezier(.4,0,.2,1), transform .25s ease, filter .25s ease;
+    transform:translateZ(0);
+    backface-visibility:hidden;
+  }
+  .site-header__logo:hover img{
+    transform:scale(1.045);
+    filter:drop-shadow(0 2px 10px rgba(22,20,15,0.18));
+  }
+  .site-header.is-scrolled .site-header__logo img{
+    height:46px;
+  }
+  .hamburger-btn{
+    display:none;
+    align-items:center;
+    justify-content:center;
+    width:36px;
+    height:36px;
+    background:none;
+    padding:0;
+    margin-right:16px;
+    color:var(--ink);
+    border-radius:50%;
+    transition:color .25s ease, background .25s ease, transform .2s ease;
+  }
+  .hamburger-btn:hover{ color:var(--wild-red); background:rgba(22,20,15,0.05); }
+  .hamburger-btn:active{ transform:scale(0.92); }
+  .hamburger-btn svg{ display:block; }
+  .hamburger-btn svg line{ transition:transform .3s ease, opacity .2s ease; transform-origin:center; }
+  .hamburger-btn[aria-expanded="true"] svg line:nth-child(1){ transform:translateY(6px) rotate(45deg); }
+  .hamburger-btn[aria-expanded="true"] svg line:nth-child(2){ opacity:0; }
+  .hamburger-btn[aria-expanded="true"] svg line:nth-child(3){ transform:translateY(-6px) rotate(-45deg); }
+  .mobile-nav{
+    display:grid;
+    grid-template-rows:0fr;
+    background:rgba(255,255,255,0.98);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    border-bottom:2px solid var(--ink);
+    position:sticky;
+    top:0;
+    z-index:99;
+    transition:grid-template-rows .4s cubic-bezier(.4,0,.2,1), border-color .4s ease;
+  }
+  .mobile-nav.is-open{
+    grid-template-rows:1fr;
+  }
+  .mobile-nav:not(.is-open){ border-bottom-color:transparent; }
+  .mobile-nav__inner{
+    min-height:0;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+  }
+  .mobile-nav a{
+    padding:18px 28px;
+    font-family:var(--font-mono);
+    font-size:0.85rem;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    font-weight:700;
+    border-top:1px solid rgba(22,20,15,0.08);
+    position:relative;
+    overflow:hidden;
+    opacity:0;
+    transform:translateY(-8px);
+    transition:opacity .3s ease, transform .3s ease, color .25s ease, padding-left .25s ease;
+  }
+  .mobile-nav a::before{
+    content:'';
+    position:absolute;
+    left:0; top:0; bottom:0;
+    width:3px;
+    background:var(--wild-red);
+    transform:scaleY(0);
+    transform-origin:bottom;
+    transition:transform .3s cubic-bezier(.4,0,.2,1);
+  }
+  .mobile-nav a::after{
+    content:'→';
+    position:absolute;
+    right:28px;
+    top:50%;
+    transform:translate(6px,-50%);
+    opacity:0;
+    color:var(--wild-red);
+    transition:transform .25s ease, opacity .25s ease;
+  }
+  .mobile-nav a:hover{ color:var(--wild-red); padding-left:34px; }
+  .mobile-nav a:hover::before{ transform:scaleY(1); }
+  .mobile-nav a:hover::after{ opacity:1; transform:translate(0,-50%); }
+  .mobile-nav.is-open .mobile-nav__inner a{ opacity:1; transform:translateY(0); }
+  .mobile-nav.is-open .mobile-nav__inner a:nth-child(1){ transition-delay:.08s; }
+  .mobile-nav.is-open .mobile-nav__inner a:nth-child(2){ transition-delay:.15s; }
+  .mobile-nav.is-open .mobile-nav__inner a:nth-child(3){ transition-delay:.22s; }
+  .mobile-nav.is-open .mobile-nav__inner a:nth-child(4){ transition-delay:.29s; }
+  .mobile-nav__login{
+    color:var(--wild-red);
+    font-weight:800;
+  }
+  .site-header__icons{
+    display:flex;
+    gap:20px;
+    align-items:center;
+  }
+  .icon-btn{
+    background:none;
+    padding:6px;
+    color:var(--ink);
+    display:flex;
+    border-radius:50%;
+    transition:color .25s ease, background .25s ease, transform .2s ease;
+  }
+  .icon-btn:hover{ color:var(--wild-red); background:rgba(22,20,15,0.05); transform:translateY(-2px); }
+  .icon-btn:active{ transform:translateY(0) scale(0.94); }
+  .cart-count{
+    font-family:var(--font-mono);
+    font-size:0.75rem;
+    background:var(--ink);
+    color:var(--paper);
+    border-radius:50%;
+    width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;
+    margin-left:-10px;
+    margin-top:-10px;
+  }
+
+
+  /* ---------- HERO ---------- */
+  .hero{
+    padding:70px 0 50px;
+    min-height:82vh;
+    display:flex;
+    align-items:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .hero__grid{
+    position:relative;
+    z-index:1;
+    display:grid;
+    grid-template-columns:1fr;
+    justify-items:center;
+    width:100%;
+  }
+  .hero__title{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:clamp(4.4rem, 11.5vw, 9.4rem);
+    line-height:0.9;
+    text-transform:uppercase;
+    margin:18px 0 26px;
+  }
+  .hero__title span{ color:var(--wild-red); }
+  .hero__copy{
+    font-size:1.4rem;
+    line-height:1.5;
+    max-width:560px;
+    margin:0 0 34px;
+    color:#3a372e;
+  }
+  .hero__ctas{ display:flex; gap:14px; flex-wrap:wrap; }
+
+  @media (min-width:901px){
+    /* True-center the logo on desktop via a 3-column grid, instead of
+       relying on the nav and icon group happening to be equal width
+       (which flex's space-between requires for a visually centered logo). */
+    .site-header{
+      display:grid;
+      grid-template-columns:1fr auto 1fr;
+    }
+    .site-header__nav{ justify-self:start; }
+    .site-header__logo{ justify-self:center; grid-column:2; }
+    .site-header__icons{ justify-self:end; }
+    .hero__content{
+      text-align:center;
+      max-width:640px;
+    }
+    .hero__copy{ margin-left:auto; margin-right:auto; }
+    .hero__ctas{ justify-content:center; }
+  }
+
+  .draw{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:18px;
+  }
+  .card{
+    width:clamp(280px, 34vw, 400px);
+    aspect-ratio:260 / 410;
+    perspective:1400px;
+  }
+  .card__inner{
+    position:relative;
+    width:100%;
+    height:100%;
+    transition:transform .6s cubic-bezier(.22,.85,.28,1);
+    transform-style:preserve-3d;
+  }
+  .card__inner.is-flipped{ transform:rotateY(180deg); }
+  .card__face{
+    position:absolute;
+    inset:0;
+    border-radius:var(--radius-card);
+    border:4px solid var(--ink);
+    backface-visibility:hidden;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding:22px;
+    text-align:center;
+    box-shadow:inset 0 0 0 3px var(--paper), 0 20px 40px -12px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .card__face--back{
+    overflow:hidden;
+    background-color:#EB181D;
+    border-color:#1A1814;
+    padding:20px;
+    /* subtle paper/linen texture via noise-like layered gradients */
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+      radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.05) 0%, transparent 55%),
+      radial-gradient(ellipse at 75% 85%, rgba(0,0,0,0.10) 0%, transparent 50%);
+  }
+  .card__back-header{
+    position:absolute;
+    top:20px; left:20px; right:20px;
+    z-index:3;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+  .card__back-brand{ text-align:left; }
+  .card__back-brand strong{
+    display:block;
+    font-family:var(--font-display);
+    font-size:0.95rem;
+    letter-spacing:0.04em;
+    color:var(--paper);
+    line-height:1.2;
+  }
+  .card__back-brand span{
+    display:block;
+    font-family:var(--font-mono);
+    font-size:0.55rem;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:rgba(255,255,255,0.85);
+    margin-top:2px;
+  }
+  .card__back-globe{
+    width:22px; height:22px;
+    border:1.4px solid rgba(255,255,255,0.85);
+    border-radius:50%;
+    position:relative;
+    flex:none;
+  }
+  .card__back-globe::before,
+  .card__back-globe::after{
+    content:"";
+    position:absolute;
+    border:1.4px solid rgba(255,255,255,0.85);
+    border-radius:50%;
+  }
+  .card__back-globe::before{ inset:-1.4px 5px; border-left:none; border-right:none; }
+  .card__back-globe::after{ inset:5px -1.4px; border-top:none; border-bottom:none; }
+  .card__crop{
+    position:absolute;
+    z-index:3;
+    width:14px; height:14px;
+    opacity:0.8;
+  }
+  .card__crop::before, .card__crop::after{
+    content:"";
+    position:absolute;
+    background:rgba(255,255,255,0.75);
+  }
+  .card__crop::before{ left:50%; top:0; width:1.4px; height:100%; transform:translateX(-50%); }
+  .card__crop::after{ top:50%; left:0; height:1.4px; width:100%; transform:translateY(-50%); }
+  .card__crop--l{ top:50%; left:14px; transform:translateY(-50%); }
+  .card__crop--r{ top:50%; right:14px; transform:translateY(-50%); }
+  .card__emblem{
+    position:absolute;
+    inset:0;
+    z-index:2;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .card__emblem-logo{
+    display:none;
+  }
+  .card__emblem::before{
+    content:"W";
+    position:absolute;
+    font-family:var(--font-display);
+    font-style:normal;
+    font-weight:900;
+    font-size:clamp(11rem, 28vw, 16rem);
+    color:var(--ink);
+    line-height:1;
+    letter-spacing:-0.04em;
+    transform:translate(10px, 10px) rotate(0deg) scaleX(0.88);
+    display:inline-block;
+    z-index:-1;
+  }
+  .card__emblem::after{
+    content:"W";
+    font-family:var(--font-display);
+    font-style:normal;
+    font-weight:900;
+    font-size:clamp(11rem, 28vw, 16rem);
+    color:var(--paper);
+    line-height:1;
+    letter-spacing:-0.04em;
+    transform:rotate(0deg) scaleX(0.88);
+    -webkit-text-stroke:1.5px var(--paper);
+    display:inline-block;
+    position:relative;
+  }
+  .card__back-tag{
+    position:absolute;
+    z-index:3;
+    left:50%;
+    top:64%;
+    transform:translate(-50%,-50%) rotate(-9deg) skewX(-4deg);
+    font-family:var(--font-graffiti);
+    font-weight:400;
+    font-size:clamp(1.6rem, 5.8vw, 2.4rem);
+    letter-spacing:0.01em;
+    color:var(--wild-red);
+    -webkit-text-stroke:1px var(--paper);
+    text-shadow:
+      -2px -2px 0 var(--paper),
+      2px -2px 0 var(--paper),
+      -2px 2px 0 var(--paper),
+      2px 2px 0 var(--paper),
+      -2px 0 0 var(--paper),
+      2px 0 0 var(--paper),
+      0 -2px 0 var(--paper),
+      0 2px 0 var(--paper),
+      1px 3px 0 rgba(0,0,0,0.25);
+    white-space:nowrap;
+    pointer-events:none;
+  }
+  .card__back-footer{
+    position:absolute;
+    bottom:20px; left:20px; right:20px;
+    z-index:3;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+  }
+  .card__back-barcode{
+    display:flex;
+    align-items:flex-end;
+    gap:2px;
+    height:20px;
+  }
+  .card__back-barcode span{
+    display:block;
+    width:2px;
+    height:100%;
+    background:rgba(255,255,255,0.85);
+  }
+  .card__back-barcode span:nth-child(3n){ width:3px; }
+  .card__back-barcode span:nth-child(5n){ height:70%; }
+  .card__back-note{
+    font-family:var(--font-mono);
+    font-size:0.6rem;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:rgba(255,255,255,0.9);
+    text-align:right;
+    line-height:1.35;
+  }
+  .card__face--front{
+    transform:rotateY(180deg);
+    background:var(--paper);
+    gap:8px;
+    padding:18px;
+  }
+  .card__face--front.is-empty{ color:#8a8472; font-family:var(--font-mono); font-size:0.85rem; letter-spacing:0.05em; text-transform:uppercase; }
+  .card__suit{ font-size:3rem; line-height:1; }
+  .card__title{
+    font-family:var(--font-display);
+    font-size:1.55rem;
+    line-height:1.1;
+    letter-spacing:0.005em;
+    margin:4px 0 0;
+  }
+  .card__motto{
+    font-family:var(--font-mono);
+    font-size:0.85rem;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    margin:0 0 10px;
+  }
+  .card__cta{
+    font-family:var(--font-mono);
+    font-size:0.88rem;
+    font-weight:700;
+    text-transform:uppercase;
+    color:var(--wild-red);
+    border-bottom:2px solid var(--wild-red);
+    padding-bottom:2px;
+  }
+  .card__cta:hover{ color:var(--ink); border-color:var(--ink); }
+  .card__thumb{
+    width:100%;
+    flex:1 1 auto;
+    min-height:0;
+    object-fit:cover;
+    border-radius:12px;
+    border:2px solid var(--ink);
+    margin-bottom:4px;
+  }
+  .card__tag{
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    color:var(--paper);
+    padding:6px 14px;
+    border-radius:20px;
+  }
+  .card__sub{
+    font-family:var(--font-mono);
+    font-size:0.68rem;
+    color:#6b6657;
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+    max-width:200px;
+    margin:-4px 0 2px;
+  }
+  .card__spec{
+    font-family:var(--font-mono);
+    font-size:0.62rem;
+    color:#a39e8c;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    margin:0;
+    border-top:1px dashed #ddd8cc;
+    padding-top:6px;
+    width:100%;
+    text-align:center;
+  }
+  .draw__caption{
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    color:#6b6657;
+    text-align:center;
+    max-width:260px;
+  }
+
+  /* ---------- HERO DOODLES (decorative, desktop only) ---------- */
+  .draw{ position:relative; }
+  .doodle{
+    position:absolute;
+    font-family:var(--font-hand);
+    color:var(--wild-red);
+    pointer-events:none;
+    z-index:5;
+    display:none;
+    text-align:center;
+  }
+  @media (min-width:1050px){ .doodle{ display:block; } }
+  .doodle--rules{ top:-20px; left:-34px; transform:rotate(-7deg); }
+  .doodle__circle{
+    position:absolute;
+    top:-16px; left:50%;
+    transform:translateX(-50%);
+    width:160px; height:78px;
+    z-index:-1;
+  }
+  .doodle__text{
+    position:relative;
+    font-size:1.4rem;
+    line-height:1.05;
+    font-weight:700;
+    display:inline-block;
+    padding:16px 8px;
+  }
+  .doodle--bubble{ bottom:70px; right:-26px; transform:rotate(5deg); }
+  .doodle__bubble-text{
+    position:relative;
+    font-size:1.25rem;
+    line-height:1.05;
+    font-weight:700;
+    color:var(--ink);
+    border:3px solid var(--ink);
+    border-radius:48% 52% 50% 50% / 55% 50% 50% 45%;
+    padding:16px 18px;
+    display:inline-block;
+    background:var(--paper);
+    box-shadow:3px 4px 0 var(--ink);
+  }
+  .doodle__bubble-text::after{
+    content:"";
+    position:absolute;
+    left:16px; bottom:-13px;
+    width:0;height:0;
+    border:10px solid transparent;
+    border-top-color:var(--ink);
+    transform:rotate(-15deg);
+  }
+  .doodle__burst{
+    position:absolute;
+    top:-14px; right:-10px;
+    font-size:1.5rem;
+    color:var(--wild-red);
+  }
+
+  /* ---------- MARQUEE ---------- */
+  .marquee{
+    overflow:hidden;
+    white-space:nowrap;
+    padding:22px 0;
+    border-top:2px solid var(--ink);
+    border-bottom:2px solid var(--ink);
+  }
+  .marquee--felt{ background:var(--felt); transform:rotate(-1.2deg) scale(1.03); margin:40px 0; }
+  .marquee--ink{ background:var(--ink); }
+  .marquee__track{
+    display:inline-flex;
+    animation:scrollLeft 22s linear infinite;
+    will-change:transform;
+    -webkit-backface-visibility:hidden;
+    backface-visibility:hidden;
+    -webkit-transform:translate3d(0,0,0);
+    transform:translate3d(0,0,0);
+  }
+  .marquee--ink .marquee__track{ animation:scrollLeft 26s linear infinite reverse; }
+  .marquee__item{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:clamp(1.6rem, 4vw, 2.6rem);
+    text-transform:uppercase;
+    padding:0 30px;
+    display:flex;
+    align-items:center;
+    gap:18px;
+  }
+  .marquee--felt .marquee__item{ color:var(--paper); }
+  .marquee--ink .marquee__item{ color:var(--wild-red); }
+  .marquee__item .pip{ color:var(--gold); font-size:1.1rem; }
+
+  @keyframes scrollLeft{
+    from{ transform:translate3d(0,0,0); }
+    to{ transform:translate3d(-50%,0,0); }
+  }
+
+  /* ---------- BLEED TEXT (oversized, runs off both edges) ---------- */
+  .bleed{
+    overflow:visible;
+    white-space:nowrap;
+    line-height:1;
+    padding:18px 0 8px;
+  }
+  .bleed__text{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:clamp(3rem, 9vw, 6.4rem);
+    text-transform:uppercase;
+    letter-spacing:-0.01em;
+    color:var(--wild-red);
+  }
+  .bleed__text .pip{ color:var(--ink); font-size:0.6em; }
+
+  /* ---------- WARNING / GAG DISCLAIMER CARD (sticker style) ---------- */
+  .warning{ padding:10px 0 50px; display:flex; justify-content:center; }
+  .warning__card{
+    max-width:320px;
+    background:#FFFDE7;
+    border:2.5px solid var(--ink);
+    border-radius:10px;
+    padding:14px 18px 12px;
+    transform:rotate(2.2deg);
+    box-shadow:3px 3px 0 var(--ink), 0 6px 18px rgba(0,0,0,0.12);
+    position:relative;
+  }
+  /* tape strip at top */
+  .warning__card::before{
+    content:"";
+    position:absolute;
+    top:-10px;
+    left:50%;
+    transform:translateX(-50%) rotate(-1deg);
+    width:54px;
+    height:18px;
+    background:rgba(201,162,39,0.45);
+    border-radius:2px;
+    border:1px solid rgba(201,162,39,0.6);
+  }
+  .warning__badge{
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    background:#D62828;
+    color:#fff;
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:0.62rem;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    padding:3px 9px;
+    border-radius:3px;
+    margin-bottom:9px;
+  }
+  .warning__text{
+    font-family:var(--font-mono);
+    font-size:0.65rem;
+    line-height:1.55;
+    margin:0 0 10px;
+    color:#3a3020;
+  }
+  .warning__sign{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    font-family:var(--font-mono);
+    font-size:0.58rem;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    color:#8a7a50;
+    border-top:1.5px dashed #c8b880;
+    padding-top:8px;
+  }
+  .warning__sign-line{ flex:1; border-bottom:1px solid var(--ink); margin-left:8px; height:1px; }
+
+  /* ---------- RULES ---------- */
+  .rules{ padding:20px 0 40px; }
+  .rules__grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:46px;
+    align-items:stretch;
+  }
+  .rules__card{
+    position:relative;
+    background:var(--paper);
+    border:3px solid var(--ink);
+    border-radius:22px;
+    padding:38px 34px;
+    box-shadow:10px 10px 0 var(--ink);
+  }
+  .rules__index{
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:1.1rem;
+    position:absolute;
+    color:var(--ink);
+  }
+  .rules__index--tl{ top:18px; left:20px; }
+  .rules__index--br{ bottom:18px; right:20px; transform:rotate(180deg); }
+  .rules__title{
+    font-family:var(--font-display);
+    font-size:2rem;
+    text-transform:uppercase;
+    margin:10px 0 24px;
+  }
+  .rules__list{
+    list-style:none;
+    margin:0 0 26px;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+  }
+  .rules__list li{
+    display:flex;
+    gap:14px;
+    align-items:flex-start;
+    font-size:1.02rem;
+    line-height:1.5;
+  }
+  .rules__pip{ font-size:1.3rem; line-height:1.3; }
+  .rules__fineprint{
+    font-family:var(--font-mono);
+    font-size:0.72rem;
+    color:#8a8472;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+
+  .patch-panel{
+    position:relative;
+    border-radius:22px;
+    border:3px solid var(--ink);
+    overflow:hidden;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 4px),
+      linear-gradient(160deg, #1b1812, #0c0a07 70%);
+    min-height:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:22px;
+    padding:38px 30px;
+    animation:flicker 6s ease-in-out infinite;
+  }
+  @keyframes flicker{
+    0%,100%{ filter:brightness(1); }
+    45%{ filter:brightness(1.05); }
+    50%{ filter:brightness(0.92); }
+    55%{ filter:brightness(1.05); }
+  }
+  .patch{
+    width:150px;height:110px;
+    border:4px dashed var(--wild-red);
+    border-radius:10px;
+    background:rgba(214,40,40,0.08);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
+  }
+  .patch__letters{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:2.1rem;
+    color:var(--wild-red);
+  }
+  .patch__star{ color:var(--gold); font-size:1rem; }
+  .patch-panel__caption{
+    font-family:var(--font-mono);
+    color:var(--paper);
+    font-size:0.78rem;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    text-align:center;
+  }
+  .patch-panel__sub{
+    font-family:var(--font-mono);
+    color:#8a8472;
+    font-size:0.7rem;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    text-align:center;
+    margin-top:-14px;
+  }
+
+  /* ---------- DECK / PRODUCTS ---------- */
+  .deck{ padding:20px 0 50px; }
+  .deck__head{ text-align:center; margin-bottom:28px; }
+  .deck__title{
+    font-family:var(--font-display);
+    font-size:clamp(2.2rem,5vw,3.4rem);
+    text-transform:uppercase;
+    margin:8px 0 0;
+  }
+  .deck__grid{
+    display:grid;
+    grid-template-columns:repeat(5, 1fr);
+    gap:20px;
+  }
+  .deck__tile{
+    background:var(--paper);
+    border:2px solid var(--ink);
+    border-radius:14px;
+    padding:20px 16px 22px;
+    text-align:center;
+    transition:transform .2s ease, box-shadow .2s ease;
+    display:flex;
+    flex-direction:column;
+    height:100%;
+  }
+  .deck__tile:hover{
+    transform:translateY(-6px);
+    box-shadow:8px 10px 0 var(--ink);
+  }
+  .deck__art{
+    width:100%;
+    aspect-ratio:1/1;
+    margin:0 auto 12px;
+    border-radius:10px;
+    border:2px solid var(--ink);
+    overflow:hidden;
+  }
+  .deck__art img{ width:100%; height:100%; object-fit:cover; }
+  .deck__suit{ font-size:1.4rem; margin:4px 0 0; }
+  .deck__name{
+    font-family:var(--font-display);
+    font-size:1.15rem;
+    letter-spacing:0.02em;
+    margin:2px 0 6px;
+  }
+  .deck__motto{
+    font-family:var(--font-mono);
+    font-size:0.66rem;
+    text-transform:uppercase;
+    letter-spacing:0.03em;
+    color:#6b6657;
+    margin:0 0 4px;
+  }
+  .deck__sub{
+    font-family:var(--font-mono);
+    font-size:0.58rem;
+    text-transform:uppercase;
+    letter-spacing:0.02em;
+    color:#a39e8c;
+    margin:0 0 14px;
+  }
+  .deck__row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    margin-top:auto;
+  }
+  .deck__price{ font-family:var(--font-mono); font-weight:700; font-size:0.85rem; }
+
+  /* ---------- PICK A CARD (interactive) ---------- */
+  .pick{ padding:16px 0 36px; }
+  .pick__head{ text-align:center; margin-bottom:10px; }
+  .pick__title{
+    font-family:var(--font-display);
+    font-size:clamp(2.2rem,5vw,3.4rem);
+    text-transform:uppercase;
+    margin:0 0 10px;
+  }
+  .pick__copy{
+    font-size:1.1rem;
+    line-height:1.5;
+    max-width:480px;
+    margin:0 auto;
+    color:#3a372e;
+  }
+  .pick__sub{
+    font-family:var(--font-mono);
+    font-size:0.72rem;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:#6b6657;
+  }
+  .pick__hand{
+    position:relative;
+    display:flex;
+    justify-content:center;
+    min-height:440px;
+    padding:36px 0 16px;
+  }
+  .pick__card{
+    --accent: var(--wild-red);
+    --tiltX: 0deg;
+    --tiltY: 0deg;
+    position:absolute;
+    left:50%;
+    top:0;
+    width:185px;
+    transform: perspective(900px) translate(calc(-50% + var(--dx)), var(--dy)) rotate(var(--rot));
+    z-index:var(--z);
+    background:var(--paper);
+    border:3px solid var(--ink);
+    border-radius:16px;
+    padding:12px;
+    text-align:left;
+    cursor:pointer;
+    box-shadow:6px 10px 0 rgba(0,0,0,0.18);
+    transition:
+      transform .5s cubic-bezier(.16,1,.3,1),
+      box-shadow .5s cubic-bezier(.16,1,.3,1),
+      border-color .35s ease;
+  }
+  .pick__card:hover,
+  .pick__card:focus-within,
+  .pick__card.is-active,
+  .pick__card.is-tapped{
+    transform:
+      perspective(900px)
+      translate(calc(-50% + var(--dx)), calc(var(--dy) - 28px))
+      rotate(0deg) scale(1.045)
+      rotateX(var(--tiltY)) rotateY(var(--tiltX));
+    border-color:var(--accent);
+    box-shadow:
+      3px 5px 0 rgba(0,0,0,0.14),
+      0 22px 34px -12px rgba(22,20,15,0.28),
+      0 10px 18px -8px rgba(22,20,15,0.16);
+    z-index:50;
+  }
+  .pick__card:active{ transition-duration:.15s; }
+  .pick__index{
+    display:inline-block;
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:0.95rem;
+    transition:color .35s ease, transform .4s cubic-bezier(.34,1.56,.64,1);
+  }
+  .pick__card:hover .pick__index,
+  .pick__card:focus-within .pick__index,
+  .pick__card.is-active .pick__index,
+  .pick__card.is-tapped .pick__index{
+    transform:rotate(-14deg) scale(1.2);
+  }
+  .pick__link{ display:block; }
+  .pick__photo{
+    aspect-ratio:1/1;
+    position:relative;
+    border-radius:10px;
+    margin:8px 0 12px;
+    padding:6px;
+    overflow:visible;
+  }
+  /* diagonal shine sweep, like light catching a foil card */
+  .pick__photo::after{
+    content:'';
+    position:absolute;
+    inset:0;
+    background:linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.55) 50%, transparent 60%);
+    transform:translateX(-120%);
+    pointer-events:none;
+  }
+  .pick__card:hover .pick__photo::after,
+  .pick__card:focus-within .pick__photo::after,
+  .pick__card.is-active .pick__photo::after,
+  .pick__card.is-tapped .pick__photo::after{
+    transform:translateX(120%);
+    transition:transform .85s cubic-bezier(.16,1,.3,1);
+  }
+  .pick__photo img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    border-radius:6px;
+    display:block;
+    position:relative;
+    transition:transform .6s cubic-bezier(.16,1,.3,1), filter .6s cubic-bezier(.16,1,.3,1);
+  }
+  .pick__card:hover .pick__photo img,
+  .pick__card:focus-within .pick__photo img,
+  .pick__card.is-active .pick__photo img,
+  .pick__card.is-tapped .pick__photo img{
+    transform:scale(1.4);
+    filter:drop-shadow(0 16px 22px rgba(0,0,0,0.35));
+  }
+  .pick__name{
+    font-family:var(--font-display);
+    font-size:1.05rem;
+    margin:0 0 6px;
+    line-height:1.15;
+    letter-spacing:0;
+    transition:color .35s ease, letter-spacing .35s ease;
+  }
+  .pick__card:hover .pick__name,
+  .pick__card:focus-within .pick__name,
+  .pick__card.is-active .pick__name,
+  .pick__card.is-tapped .pick__name{
+    color:var(--accent);
+    letter-spacing:0.01em;
+  }
+  .pick__blurb{
+    font-size:0.78rem;
+    line-height:1.4;
+    color:#6b6657;
+    margin:0 0 14px;
+    min-height:48px;
+    transition:color .35s ease;
+  }
+  .pick__card:hover .pick__blurb,
+  .pick__card:focus-within .pick__blurb,
+  .pick__card.is-active .pick__blurb,
+  .pick__card.is-tapped .pick__blurb{
+    color:var(--ink);
+  }
+  .pick__row{ display:flex; align-items:center; justify-content:center; gap:8px; min-height:38px; }
+  .pick__price{
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:0.95rem;
+    text-align:center;
+    transition:color .35s ease, transform .35s cubic-bezier(.16,1,.3,1);
+  }
+  .pick__card:hover .pick__price,
+  .pick__card:focus-within .pick__price,
+  .pick__card.is-active .pick__price,
+  .pick__card.is-tapped .pick__price{
+    color:var(--accent);
+  }
+  .btn--hand{
+    position:relative;
+    overflow:hidden;
+    background:var(--ink);
+    color:var(--paper);
+    opacity:0;
+    transform:translateY(10px) scale(0.9);
+    pointer-events:none;
+    transition:
+      opacity .4s cubic-bezier(.16,1,.3,1),
+      transform .4s cubic-bezier(.16,1,.3,1),
+      background .25s ease,
+      color .25s ease;
+  }
+  .pick__card:hover .btn--hand,
+  .pick__card:focus-within .btn--hand,
+  .pick__card.is-active .btn--hand,
+  .pick__card.is-tapped .btn--hand{
+    opacity:1;
+    transform:translateY(0) scale(1);
+    pointer-events:auto;
+  }
+  .btn--hand:hover{ background:var(--accent); }
+  .btn--hand:active{ transform:scale(0.94); }
+  .btn--hand.is-added{
+    background:var(--c-green);
+    color:var(--paper);
+    opacity:1;
+    transform:translateY(0) scale(1);
+    pointer-events:auto;
+  }
+  @keyframes hand-pop{
+    0%{ transform:scale(1); }
+    35%{ transform:scale(1.14); }
+    100%{ transform:scale(1); }
+  }
+  .btn--hand.is-popping{ animation:hand-pop .42s cubic-bezier(.34,1.56,.64,1); }
+  .pick__cta{ display:flex; flex-direction:column; align-items:center; gap:12px; justify-content:center; margin-top:20px; }
+  .pick__cta-row{ display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
+  .pick__hint{ display:none; }
+
+  /* header cart badge pop, triggered whenever an item is added/removed */
+  @keyframes cart-pop{
+    0%{ transform:scale(1); }
+    40%{ transform:scale(1.35); }
+    100%{ transform:scale(1); }
+  }
+  .cart-count.is-popping{ animation:cart-pop .4s cubic-bezier(.34,1.56,.64,1); }
+
+  @media (prefers-reduced-motion: reduce){
+    .pick__photo::after{ display:none; }
+    .btn--hand.is-popping,
+    .cart-count.is-popping{ animation:none; }
+  }
+
+
+  /* ---------- JOIN ---------- */
+  .join{
+    background:var(--felt);
+    padding:46px 0;
+    border-top:2px solid var(--ink);
+    border-bottom:2px solid var(--ink);
+  }
+  .join__grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:50px;
+    align-items:center;
+  }
+  .join__title{
+    font-family:var(--font-display);
+    font-size:clamp(2rem,4.5vw,3rem);
+    color:var(--paper);
+    text-transform:uppercase;
+    margin:8px 0 14px;
+  }
+  .join__copy{
+    color:#ffd9d9;
+    font-size:1rem;
+    line-height:1.6;
+    max-width:420px;
+    margin:0 0 12px;
+  }
+  .join__sms{
+    font-family:var(--font-mono);
+    font-size:0.85rem;
+    color:var(--gold);
+  }
+  .ticket{
+    background:var(--paper);
+    border-radius:14px;
+    padding:30px;
+    position:relative;
+    box-shadow:0 18px 40px -16px rgba(0,0,0,0.5);
+  }
+  .ticket::before, .ticket::after{
+    content:"";
+    position:absolute;
+    width:24px;height:24px;
+    background:var(--felt);
+    border-radius:50%;
+    top:50%;
+    transform:translateY(-50%);
+  }
+  .ticket::before{ left:-12px; }
+  .ticket::after{ right:-12px; }
+  .ticket__row{ display:flex; gap:10px; margin-bottom:14px; }
+  .ticket__input{
+    flex:1;
+    font-family:var(--font-mono);
+    font-size:0.85rem;
+    padding:13px 14px;
+    border:2px solid var(--ink);
+    border-radius:6px;
+    background:#fff;
+    color:var(--ink);
+  }
+  .ticket__divider{
+    border:none;
+    border-top:2px dashed #b8b2a0;
+    margin:18px 0;
+  }
+  .ticket__fine{
+    font-family:var(--font-mono);
+    font-size:0.7rem;
+    color:#8a8472;
+    text-align:center;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+  .ticket .btn{ width:100%; justify-content:center; }
+
+  /* ---------- FOOTER ---------- */
+  .site-footer{
+    background:var(--paper);
+    color:var(--ink);
+    padding:0 28px 0;
+    position:relative;
+  }
+
+  .site-footer__grid{
+    display:grid;
+    grid-template-columns:1.5fr 1fr 1fr;
+    gap:64px;
+    padding:88px 0 64px;
+  }
+
+  .site-footer__brand{ padding-right:20px; }
+  .site-footer__logo{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:2.1rem;
+    letter-spacing:0.01em;
+    color:var(--wild-red);
+    display:inline-block;
+    margin:0 0 18px;
+  }
+  .site-footer__tagline{
+    font-family:var(--font-body);
+    font-size:0.98rem;
+    line-height:1.7;
+    color:#6b6558;
+    max-width:34ch;
+    margin:0 0 32px;
+  }
+
+  .site-footer__heading{
+    font-family:var(--font-mono);
+    font-size:0.92rem;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:800;
+    margin:0 0 26px;
+  }
+  .site-footer__col:nth-of-type(1) .site-footer__heading{ color:var(--c-blue); }
+  .site-footer__col:nth-of-type(2) .site-footer__heading{ color:var(--c-green); }
+
+  .site-footer__col{
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .site-footer__col a{
+    position:relative;
+    width:fit-content;
+    font-family:var(--font-body);
+    font-size:0.95rem;
+    color:var(--ink);
+    transition:color .3s ease, transform .3s ease;
+  }
+  .site-footer__col a::after{
+    content:'';
+    position:absolute;
+    left:0; bottom:-3px;
+    width:100%;
+    height:2px;
+    transform:scaleX(0);
+    transform-origin:left;
+    transition:transform .35s cubic-bezier(.4,0,.2,1);
+  }
+  .site-footer__col:nth-of-type(1) a::after{ background:var(--c-blue); }
+  .site-footer__col:nth-of-type(2) a::after{ background:var(--c-green); }
+  .site-footer__col a:hover{ transform:translateX(4px); }
+  .site-footer__col:nth-of-type(1) a:hover{ color:var(--c-blue); }
+  .site-footer__col:nth-of-type(2) a:hover{ color:var(--c-green); }
+  .site-footer__col a:hover::after{ transform:scaleX(1); }
+
+  .site-footer__divider{
+    height:2px;
+    background:var(--ink);
+  }
+
+  .site-footer__bottom{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:20px;
+    padding:28px 0 36px;
+  }
+  .site-footer__copy{
+    font-family:var(--font-mono);
+    font-size:0.7rem;
+    color:#8a8472;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+  }
+  .social-row{ display:flex; gap:12px; }
+  .social-row a{
+    width:38px;height:38px;
+    border:2px solid var(--ink);
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    color:var(--ink);
+    transition:border-color .3s ease, background .3s ease, color .3s ease, transform .3s ease;
+  }
+  .social-row a:nth-child(1):hover{ background:var(--c-red); border-color:var(--c-red); color:var(--paper); }
+  .social-row a:nth-child(2):hover{ background:var(--c-blue); border-color:var(--c-blue); color:var(--paper); }
+  .social-row a:nth-child(3):hover{ background:var(--c-green); border-color:var(--c-green); color:var(--paper); }
+  .social-row a:hover{ transform:translateY(-3px); }
+
+  @media (max-width:900px){
+    .site-footer__grid{
+      grid-template-columns:1fr 1fr;
+      row-gap:48px;
+      column-gap:32px;
+      padding:64px 0 48px;
+    }
+    .site-footer__brand{ grid-column:1 / -1; padding-right:0; }
+  }
+  @media (max-width:600px){
+    .site-footer__grid{
+      grid-template-columns:1fr;
+      row-gap:44px;
+      text-align:center;
+      padding:56px 0 40px;
+    }
+    .site-footer__brand{ display:flex; flex-direction:column; align-items:center; }
+    .site-footer__tagline{ max-width:28ch; }
+    .site-footer__col{ align-items:center; }
+    .site-footer__col a::after{ left:0; right:0; margin:0 auto; }
+    .site-footer__bottom{ justify-content:center; text-align:center; }
+  }
+
+  /* ---------- SUPPORT STRIP ---------- */
+  .support-strip{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap:6px;
+    padding:28px 28px 0;
+    max-width:var(--container);
+    margin:0 auto;
+    text-align:right;
+  }
+  .support-strip__label{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:1.3rem;
+    color:var(--wild-red);
+    margin:0;
+  }
+  .support-strip__rule{ width:90px; height:2px; background:var(--gold); }
+  .support-strip__email{
+    font-family:var(--font-mono);
+    font-size:1.05rem;
+    font-weight:700;
+    letter-spacing:0.01em;
+    color:var(--ink);
+  }
+  .support-strip__email:hover{ color:var(--wild-red); }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (min-width: 901px){
+    .btn--shop-full-deck{ display:none; }
+    .btn--lookbook{ background:var(--wild-red); }
+    .btn--lookbook:hover{ background:var(--wild-red-dark); }
+  }
+  .footer-shop-mobile{ display:none; }
+  @media (max-width: 900px){
+    .hero{ padding:46px 0 30px; min-height:0; display:block; }
+    .hero__grid{ grid-template-columns:1fr; gap:42px; }
+    .rules__grid{ grid-template-columns:1fr; }
+    .deck__grid{ grid-template-columns:repeat(2, 1fr); }
+    .join__grid{ grid-template-columns:1fr; }
+    .footer-shop-desktop{ display:none; }
+    .footer-shop-mobile{ display:inline; }
+    .site-header__nav{ display:none; }
+    .hamburger-btn{ display:flex; }
+    .site-header__icons{ gap:12px; }
+    .icon-btn--login{ display:none; }
+    /* Center the logo regardless of unequal widths of the hamburger
+       button (left) and icon group (right) */
+    .site-header{ position:relative; }
+    .site-header__logo{
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%, -50%);
+    }
+    .icon-btn{ width:36px; height:36px; align-items:center; justify-content:center; }
+    .icon-btn svg{ width:26px; height:26px; }
+    .pick__hint{
+      display:block;
+      text-align:center;
+      font-family:var(--font-mono);
+      font-size:0.68rem;
+      letter-spacing:0.1em;
+      text-transform:uppercase;
+      color:#9a9484;
+      margin:0 0 20px;
+      position:relative;
+      z-index:2000;
+    }
+    .pick__hand{
+      position:relative;
+      display:block;
+      height:460px;
+      min-height:460px;
+      margin:0 auto;
+      padding:18px 0 0;
+      overflow:visible;
+      perspective:1400px;
+      -webkit-perspective:1400px;
+      touch-action:pan-y;
+      -webkit-user-select:none;
+      user-select:none;
+    }
+    .pick__hand *{ -webkit-tap-highlight-color:transparent; }
+    /* soft ambient glow behind the fan, recolored to match whichever
+       card is currently front-and-center — updated in JS on card change */
+    .pick__glow{
+      position:absolute;
+      left:50%;
+      bottom:8%;
+      width:4px;
+      height:4px;
+      border-radius:50%;
+      transform:translateX(-50%);
+      box-shadow:0 0 130px 85px transparent;
+      transition:box-shadow .6s ease;
+      pointer-events:none;
+      z-index:0;
+    }
+    .pick__card{
+      position:absolute;
+      left:50%;
+      top:50%;
+      bottom:auto;
+      width:min(58vw,190px);
+      margin:0;
+      padding:11px 11px 13px;
+      border-radius:18px;
+      transform-origin:50% 50%;
+      /* Only transform/opacity are touched every animation frame (both are
+         compositor-only, so the slide can glide at a steady 60/120fps without
+         forcing layout or paint work). Depth cues below are class-driven
+         and cross-fade on their own CSS transition instead. */
+      transition:box-shadow .45s cubic-bezier(.22,1,.36,1), filter .45s cubic-bezier(.22,1,.36,1);
+      will-change:transform, opacity;
+      backface-visibility:hidden;
+      -webkit-backface-visibility:hidden;
+      touch-action:pan-y;
+      cursor:grab;
+      box-shadow:0 10px 22px rgba(22,20,15,0.14);
+      filter:saturate(0.82) brightness(0.92);
+    }
+    .pick__hand.is-dragging .pick__card{ cursor:grabbing; transition:none; }
+    .pick__card.is-near{
+      box-shadow:0 16px 32px rgba(22,20,15,0.2);
+      filter:saturate(0.94) brightness(0.98);
+    }
+    .pick__card.is-active{
+      cursor:default;
+      filter:none;
+      box-shadow:
+        0 8px 16px rgba(22,20,15,0.22),
+        0 46px 70px -16px rgba(22,20,15,0.5),
+        0 20px 34px -10px rgba(22,20,15,0.35),
+        0 0 0 3px rgba(var(--accent-rgb,22,20,15), 0.9),
+        0 0 46px 8px rgba(var(--accent-rgb,22,20,15), 0.4);
+    }
+    /* The photo's own scale/position is driven by JS every animation
+       frame (see the fan controller below) so it can grow continuously
+       as the card approaches center and briefly overshoot on arrival.
+       A CSS transition on transform here would fight that per-frame
+       update and make it feel laggy, so only filter is allowed to
+       transition smoothly; the drop-shadow deepens as the shirt grows,
+       reinforcing the sense that it's coming toward the viewer. */
+    .pick__hand .pick__card .pick__photo img{
+      transition: filter .45s ease;
+    }
+    .pick__hand .pick__card.is-active .pick__photo img{
+      filter: drop-shadow(0 26px 30px rgba(0,0,0,0.4)) drop-shadow(0 8px 10px rgba(0,0,0,0.28));
+    }
+    .pick__card:hover, .pick__card:focus-within{
+      transform:none;
+      z-index:auto;
+    }
+    .pick__card .pick__photo{ margin:5px 0 8px; }
+    .pick__card .pick__name{ font-size:1rem; }
+    .pick__card .pick__blurb{
+      font-size:0.74rem;
+      min-height:0;
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+    }
+    .pick__card .btn--hand{
+      padding:7px 12px;
+      font-size:0.64rem;
+    }
+    .pick__dots{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      gap:9px;
+      margin:70px 0 4px;
+      position:relative;
+      z-index:1001;
+    }
+    .pick__dot{
+      width:7px;
+      height:7px;
+      border-radius:50%;
+      background:rgba(22,20,15,0.2);
+      padding:0;
+      transition:transform .3s cubic-bezier(.34,1.56,.64,1), background .3s ease;
+    }
+    .pick__dot.is-active{
+      background:var(--wild-red);
+      transform:scale(1.5);
+    }
+  }
+  @media (max-width: 480px){
+    .deck__grid{ grid-template-columns:1fr 1fr; gap:14px; }
+    .ticket__row{ flex-direction:column; }
+    .support-strip{ align-items:flex-start; text-align:left; }
+  }
+
+  /* ---------- SCROLL REVEAL (fade up + subtle scale, staggered) ---------- */
+  .reveal{
+    opacity:0;
+    transform:translateY(28px) scale(0.965);
+    transition:opacity 0.9s cubic-bezier(.16,1,.3,1), transform 0.9s cubic-bezier(.16,1,.3,1);
+    transition-delay:calc(var(--d, 0) * 0.09s);
+  }
+  .reveal.is-revealing{ will-change:opacity, transform; }
+  .reveal.is-visible{
+    opacity:1;
+    transform:translateY(0) scale(1);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .marquee__track{ animation:none; }
+    .card__inner{ transition:none; }
+    .patch-panel{ animation:none; }
+    html{ scroll-behavior:auto; }
+    .reveal{
+      opacity:1 !important;
+      transform:none !important;
+      transition:none !important;
+    }
+    .site-header,
+    .site-header__logo img,
+    .site-header__nav a::after,
+    .hamburger-btn svg line,
+    .mobile-nav,
+    .mobile-nav a,
+    .icon-btn{ transition:none; }
+  }
+  /* ===================================
+   MOBILE FIXES
+=================================== */
+
+@media (max-width: 600px){
+
+  .wrap{
+    padding:0 18px;
+  }
+
+  /* ---------- HERO ---------- */
+  /* Hero (with its former interactive card) stays hidden on mobile —
+     the swipeable Pick a Card section leads instead. */
+  .hero{
+    display:none;
+  }
+
+  /* ---------- PICK A CARD ---------- */
+  /* Comfortable spacing for title/deck/dots/buttons so that block reads
+     cleanly above the fold; the paragraph gets a hairline rule and a
+     generous gap so it clearly reads as separate, below-the-fold content
+     rather than crowding the buttons above it. */
+  /* Cards inside .pick__hand deliberately use overflow:visible so the
+     fan/burst effect can bleed past its own box — but with nothing
+     between it and <body> to contain that bleed, the widest flick pushes
+     .pick__card well past the actual screen edge and iOS Safari picks
+     that up as real horizontal scroll (rubber-band drag), even though
+     body has overflow-x:hidden — a known WebKit quirk where that
+     propagation isn't reliable several levels deep through transforms.
+     Clipping here, at the section that spans the true viewport width,
+     stops the drag without trimming anything that was actually visible:
+     content beyond this edge was already off-screen. */
+  .pick{
+    padding:16px 0 40px;
+    overflow-x:hidden;
+  }
+  .pick__head{
+    margin-bottom:8px;
+  }
+  .pick__title{
+    margin:0 0 8px;
+  }
+
+  /* Unwrap .pick__head and .pick__cta so their children become direct
+     flex items of .wrap — lets us reorder: title, hint, deck, dots,
+     collection line, buttons, then the paragraph last. */
+  .pick .wrap{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+  .pick__head,
+  .pick__cta{
+    display:contents;
+  }
+  .pick__title{ order:1; }
+  .pick__hint{ order:2; margin:0 0 20px; }
+  .pick__hand{ order:3; width:100%; height:380px; min-height:380px; perspective:900px; }
+  .pick__dots{ order:4; }
+  .pick__sub{
+    order:5;
+    text-align:center;
+  }
+  .pick__cta-row{ order:6; }
+  .pick__copy{
+    order:7;
+    text-align:center;
+    font-size:1rem;
+    margin:56px auto 0;
+    padding-top:28px;
+    border-top:1px solid rgba(22,20,15,0.1);
+    max-width:30ch;
+  }
+
+  .pick__cta{
+    margin-top:18px;
+    gap:12px;
+  }
+
+  .pick__card{
+    width:min(52vw, 175px);
+  }
+
+  .pick__dots{
+    margin:66px 0 4px !important;
+  }
+}
+
+/* ---------- Intro arrival overlay ----------
+   Only ever shown when we've just been navigated to from the room intro's
+   camera-dive (index.html sets a one-time sessionStorage flag right before
+   it navigates here — see the script right after <body>, below). It picks
+   up the same radial flash + vignette gradients, centered on the same
+   focal point, that were mid-fade at the moment of navigation, and finishes
+   that resolve here — the crossfade reads as one continuous motion even
+   though a real top-level page load happened in the middle of it. Hidden
+   by default via inline style so a normal visit or link click here never
+   shows it. */
+#wcArrivalOverlay{
+  position:fixed; inset:0;
+  z-index:99999;
+  pointer-events:none;
+}
+#wcArrivalFlash{
+  position:absolute; inset:0;
+  background: radial-gradient(circle at var(--fx,50%) var(--fy,50%),
+    rgba(255,255,255,1) 0%,
+    rgba(224,242,255,1) 30%,
+    rgba(168,214,255,0.95) 55%,
+    rgba(60,90,140,0.55) 80%,
+    rgba(10,14,26,0) 100%);
+  opacity: 1;
+}
+#wcArrivalVignette{
+  position:absolute; inset:0;
+  background: radial-gradient(circle at var(--fx,50%) var(--fy,50%), transparent 30%, rgba(4,6,12,0.92) 100%);
+  opacity: 0.7;
+}
+
+</style>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3SLJZH3SVM"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-3SLJZH3SVM');
+</script>
+</head>
+<body>
+
+  <div id="wcArrivalOverlay" style="display:none;" aria-hidden="true">
+    <div id="wcArrivalFlash"></div>
+    <div id="wcArrivalVignette"></div>
+  </div>
+  <script>
+  // Picks up the room intro's camera-dive transition where it left off (see
+  // goToLanding() in index.html). Reads the one-time flag it left in
+  // sessionStorage, removes it immediately so a refresh/back-nav never
+  // replays this, then finishes the flash/vignette fade the dive was
+  // already mid-way through — same focal point, comparable timing to the
+  // original in-page resolve — so the handoff across the real page load
+  // reads as one continuous motion instead of two separate transitions.
+  (function(){
+    try{
+      var raw = sessionStorage.getItem('wcIntroArrival');
+      if(!raw) return;
+      sessionStorage.removeItem('wcIntroArrival');
+      var data = JSON.parse(raw);
+
+      var overlay  = document.getElementById('wcArrivalOverlay');
+      var flash    = document.getElementById('wcArrivalFlash');
+      var vignette = document.getElementById('wcArrivalVignette');
+
+      overlay.style.setProperty('--fx', data.fx || '50%');
+      overlay.style.setProperty('--fy', data.fy || '50%');
+      overlay.style.display = 'block';
+
+      // Mobile's dive reveals the landing page with a quick 0.35s glide;
+      // desktop's flash resolves more slowly over 0.6s. Matches the two
+      // fade durations index.html used for the equivalent in-page step.
+      var fadeMs  = data.mobile ? 350 : 600;
+      var delayMs = data.mobile ? 0 : 200;
+
+      // Double rAF guarantees the browser has actually painted the overlay
+      // in its opaque starting state before we attach a transition and
+      // retarget opacity — skip this and some browsers coalesce the two
+      // states into one frame, so the fade never visibly plays.
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          setTimeout(function(){
+            flash.style.transition = 'opacity ' + (fadeMs / 1000) + 's ease-in-out';
+            vignette.style.transition = 'opacity ' + (fadeMs / 1000) + 's ease-in-out';
+            flash.style.opacity = '0';
+            vignette.style.opacity = '0';
+            setTimeout(function(){
+              overlay.remove();
+            }, fadeMs + 50);
+          }, delayMs);
+        });
+      });
+    }catch(e){}
+  })();
+  </script>
+
+  <!-- ===== GLOBAL W WATERMARK (fixed, behind all content) ===== -->
+  <div class="site-ws" aria-hidden="true">
+    <!-- row 1 -->
+    <span class="site-ws__w" style="color:#16140F;font-size:16vw;top:2%;left:-5%;transform:rotate(-14deg);">W</span>
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#D62828;font-size:10vw;top:6%;left:42%;transform:rotate(7deg);">W</span>
+    <span class="site-ws__w" style="color:#2456C7;font-size:8vw;top:3%;left:80%;transform:rotate(-9deg);">W</span>
+    <!-- row 2 -->
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#2F6F4E;font-size:12vw;top:22%;left:24%;transform:rotate(5deg);">W</span>
+    <span class="site-ws__w" style="color:#E8B92F;font-size:9vw;top:18%;left:70%;transform:rotate(-16deg);">W</span>
+    <!-- row 3 -->
+    <span class="site-ws__w" style="color:#D62828;font-size:13vw;top:40%;left:-4%;transform:rotate(11deg);">W</span>
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#16140F;font-size:7vw;top:44%;left:52%;transform:rotate(-6deg);">W</span>
+    <span class="site-ws__w" style="color:#2F6F4E;font-size:10vw;top:38%;left:82%;transform:rotate(18deg);">W</span>
+    <!-- row 4 -->
+    <span class="site-ws__w" style="color:#E8B92F;font-size:14vw;top:58%;left:10%;transform:rotate(-10deg);">W</span>
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#2456C7;font-size:9vw;top:62%;left:60%;transform:rotate(8deg);">W</span>
+    <!-- row 5 -->
+    <span class="site-ws__w" style="color:#16140F;font-size:11vw;top:76%;left:-2%;transform:rotate(13deg);">W</span>
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#D62828;font-size:8vw;top:78%;left:38%;transform:rotate(-7deg);">W</span>
+    <span class="site-ws__w" style="color:#E8B92F;font-size:12vw;top:80%;left:72%;transform:rotate(-12deg);">W</span>
+    <!-- row 6 -->
+    <span class="site-ws__w site-ws__w--hide-mobile" style="color:#2F6F4E;font-size:9vw;top:92%;left:18%;transform:rotate(9deg);">W</span>
+    <span class="site-ws__w" style="color:#2456C7;font-size:10vw;top:90%;left:55%;transform:rotate(-5deg);">W</span>
+  </div>
+
+  <header class="site-header">
+    <nav class="site-header__nav">
+      <a href="#shop">Home</a>
+      <a href="lookbook.html">Lookbook</a>
+      <a href="index.html">Enter Room</a>
+    </nav>
+    <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu" aria-expanded="false" type="button">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="site-header__logo"><a href="home.html" aria-label="WILDCARD home"><img src="images/logo.png" alt="Wildcard" width="839" height="160" loading="eager" decoding="async" fetchpriority="high"></a></div>
+    <div class="site-header__icons">
+      <a class="icon-btn icon-btn--login" aria-label="Login" aria-disabled="true" role="link" tabindex="-1" style="pointer-events:none;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+      </a>
+      <button class="icon-btn" id="cartBtn" aria-label="Cart" type="button" style="position:relative;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/><path d="M3 4h2l2.4 12.4a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/></svg>
+        <span class="cart-count" id="cartCount" style="display:none;">0</span>
+      </button>
+    </div>
+  </header>
+
+  <nav class="mobile-nav" id="mobileNav">
+    <div class="mobile-nav__inner">
+      <a href="#shop">Home</a>
+      <a href="lookbook.html">Lookbook</a>
+      <a href="index.html">Enter Room</a>
+      <a class="mobile-nav__login" aria-disabled="true" role="link" tabindex="-1" style="pointer-events:none;">Login</a>
+    </div>
+  </nav>
+
+  <section class="pick" id="shop">
+    <div class="wrap">
+      <div class="pick__head">
+        <h2 class="pick__title reveal" style="--d:0">Pick a Card</h2>
+        <p class="pick__copy reveal" style="--d:1">Every card tells a story. Which one will you wear? Pick your card. Wear your mindset.</p>
+      </div>
+      <p class="pick__hint reveal" style="--d:2">← Swipe to fan through the deck →</p>
+      <div class="pick__hand reveal" id="pickHand" style="--d:2"></div>
+      <div class="pick__cta reveal" style="--d:3">
+        <p class="pick__sub">The WILDCARD Collection · 5 of 5 · All Raglans</p>
+        <div class="pick__cta-row">
+          <a href="lookbook.html" class="btn btn--primary btn--lookbook">View Lookbook</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="reveal" style="--d:0">
+    <div class="marquee marquee--felt">
+      <div class="marquee__track" id="marquee1">
+        <!-- duplicated via JS for seamless loop -->
+      </div>
+    </div>
+  </div>
+
+
+
+  <div class="support-strip reveal" style="--d:0">
+    <p class="support-strip__label">Support</p>
+    <span class="support-strip__rule"></span>
+    <a href="mailto:support@wildcardshit.com" class="support-strip__email">support@wildcardshit.com</a>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap">
+
+      <div class="site-footer__grid">
+
+        <div class="site-footer__brand reveal" style="--d:0">
+          <span class="site-footer__logo">WILDCARD</span>
+          <p class="site-footer__tagline">Every color carries a different energy. Choose your WILDCARD.</p>
+          <div class="social-row">
+            <a href="mailto:support@wildcardshit.com" aria-label="Email"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></a>
+            <a href="https://instagram.com/wildcardshit" target="_blank" rel="noopener" aria-label="Instagram"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg></a>
+            <a href="https://tiktok.com/@wildcardshit" target="_blank" rel="noopener" aria-label="TikTok"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4v9.5a3.5 3.5 0 1 1-3.5-3.5"/><path d="M14 4c0 2.5 2 4.5 4.5 4.5"/></svg></a>
+          </div>
+        </div>
+
+        <nav class="site-footer__col reveal" style="--d:1">
+          <p class="site-footer__heading">Shop</p>
+          <a href="#shop" class="footer-shop-desktop">The Collection</a>
+          <a href="#shop" class="footer-shop-mobile">The Collection</a>
+          <a href="lookbook.html">Lookbook</a>
+          <a href="contact.html">Contact</a>
+        </nav>
+
+        <nav class="site-footer__col reveal" style="--d:2">
+          <p class="site-footer__heading">Legal</p>
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="shipping.html">Shipping Policy</a>
+          <a href="terms.html">Terms of Service</a>
+        </nav>
+
+      </div>
+
+      <div class="site-footer__divider"></div>
+
+      <div class="site-footer__bottom reveal" style="--d:3">
+        <p class="site-footer__copy">© 2026 Wildcard · wildcardshit.com</p>
+        <p class="site-footer__copy">Designed for the deck.</p>
+      </div>
+
+    </div>
+  </footer>
+
+<script src="js/cart.js"></script>
+<script>
+const IMG_BLACK = "images/black-shirt.png";
+const IMG_RED = "images/red-shirt.png";
+const IMG_BLUE = "images/blue-shirt.png";
+const IMG_GREEN = "images/green-shirt.png";
+const IMG_YELLOW = "images/yellow-shirt.png";
+
+  const DECK = [
+    { suit:'♠', label:'BLACK',  hex:'#16140F', motto:"PLAY YOUR CARDS RIGHT", sub:null, img: IMG_BLACK, blurb:"Two hands, five cards, zero bluffing. Just play it right." },
+    { suit:'♥', label:'RED',    hex:'#D62828', motto:"FACE YOUR FEARS", sub:"WE'RE ALL FIGHTING DEMONS", img: IMG_RED, blurb:"We're all fighting something. Might as well wear it loud." },
+    { suit:'♦', label:'BLUE',   hex:'#2456C7', motto:"IGNORE THE NOISE", sub:null, img: IMG_BLUE, blurb:"Block out everyone who was never worth the volume." },
+    { suit:'♣', label:'GREEN',  hex:'#2F6F4E', motto:"GROW THROUGH WHAT YOU GO THROUGH", sub:null, img: IMG_GREEN, blurb:"Luck doesn't grow on trees. It grows through everything else." },
+    { suit:'★', label:'YELLOW', hex:'#E8B92F', motto:"TRUST THE PROCESS", sub:"CHANGE IS HAPPENING EVEN WHEN YOU CAN'T SEE IT", img: IMG_YELLOW, blurb:"Every monarch was a mess first. Trust it." },
+  ];
+
+  // Build the interactive "Pick a Card" hand from real Phase 1 product photos
+  const pickHand = document.getElementById('pickHand');
+  const pickCenter = (DECK.length - 1) / 2;
+
+  function hexToRgbTriple(hex){
+    const h = hex.trim().replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    const num = parseInt(full, 16);
+    if (Number.isNaN(num)) return '22,20,15';
+    return `${(num >> 16) & 255},${(num >> 8) & 255},${num & 255}`;
+  }
+
+  DECK.forEach((item, i)=>{
+    const offset = i - pickCenter;
+    const card = document.createElement('article');
+    card.className = 'pick__card';
+    card.tabIndex = 0;
+    card.style.setProperty('--dx', `${offset * 210}px`);
+    card.style.setProperty('--dy', `${Math.abs(offset) * 8}px`);
+    card.style.setProperty('--rot', `${offset * 4}deg`);
+    card.style.setProperty('--z', `${10 - Math.abs(offset)}`);
+    card.style.setProperty('--accent', item.hex);
+    // Set once at build time (not per animation frame) so the mobile fan's
+    // active-card glow can be pure CSS — see .pick__card.is-active.
+    card.style.setProperty('--accent-rgb', hexToRgbTriple(item.hex));
+    const productId = item.label.toLowerCase();
+    card.innerHTML = `
+      <span class="pick__index" style="color:${item.hex}">${item.suit}</span>
+      <a class="pick__link" href="product.html?id=${productId}" aria-label="View ${item.label} colorway">
+        <div class="pick__photo"><img src="${item.img}" alt="${item.label} colorway raglan" loading="lazy" decoding="async"></div>
+        <h3 class="pick__name">${item.motto}</h3>
+      </a>
+      <p class="pick__blurb">${item.blurb}</p>
+      <div class="pick__row">
+        <span class="pick__price">$44</span>
+      </div>
+    `;
+    pickHand.appendChild(card);
+  });
+
+  // Subtle 3D tilt that follows the cursor — desktop, fine-pointer devices only.
+  // The mobile fanned-hand controller sets its own inline transform per card,
+  // which naturally overrides this, so the two never fight.
+  const supportsHoverTilt = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  if (supportsHoverTilt){
+    Array.from(pickHand.querySelectorAll('.pick__card')).forEach(card => {
+      card.addEventListener('mousemove', (e) => {
+        const rect = card.getBoundingClientRect();
+        const px = (e.clientX - rect.left) / rect.width;   // 0..1
+        const py = (e.clientY - rect.top) / rect.height;   // 0..1
+        const tiltX = (px - 0.5) * 16;  // rotateY range
+        const tiltY = (0.5 - py) * 16;  // rotateX range
+        card.style.setProperty('--tiltX', `${tiltX.toFixed(2)}deg`);
+        card.style.setProperty('--tiltY', `${tiltY.toFixed(2)}deg`);
+      });
+      card.addEventListener('mouseleave', () => {
+        card.style.setProperty('--tiltX', '0deg');
+        card.style.setProperty('--tiltY', '0deg');
+      });
+    });
+  }
+
+  // Restarts a CSS animation on `el` by toggling `cls` off and back on.
+  // Uses a double rAF instead of reading `offsetWidth` so the browser never
+  // has to perform a synchronous forced layout just to restart a pop
+  // animation — both rAFs land after the next style/layout pass, which is
+  // enough for the browser to treat the re-add as a fresh animation start.
+  function restartAnimation(el, cls){
+    el.classList.remove(cls);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.classList.add(cls);
+      });
+    });
+  }
+
+  // Header cart badge is now driven by the shared cart (js/cart.js), which
+  // watches #cartCount automatically — nothing to wire up here.
+
+  // Tap-to-reveal on touch devices (or any device without real hover):
+  // tapping a card brings its detail treatment into view, matching the
+  // hover state on desktop. Tapping elsewhere clears it.
+  pickHand.addEventListener('click', (e) => {
+    const card = e.target.closest('.pick__card');
+    if (!card) return;
+    document.querySelectorAll('.pick__card.is-tapped').forEach(c => {
+      if (c !== card) c.classList.remove('is-tapped');
+    });
+    card.classList.add('is-tapped');
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('#pickHand')) return;
+    document.querySelectorAll('.pick__card.is-tapped').forEach(c => c.classList.remove('is-tapped'));
+  }, { passive: true });
+
+  // ---------- Mobile "fanned hand" swipe controller ----------
+  // Turns the Pick-a-Card grid into a real hand of overlapping,
+  // spring-driven playing cards on small screens. Desktop keeps the
+  // original hover-fan grid untouched; this only engages <=900px.
+  (function(){
+    const BREAKPOINT = 900;
+    const cards = Array.from(pickHand.querySelectorAll('.pick__card'));
+    const count = cards.length;
+    if (!count) return;
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let active = false;       // whether the fan controller is engaged
+    let position = 0;         // continuous "virtual index" of the fan
+    let activeIndex = 0;
+    let velocity = 0;         // px per ms from the most recent drag
+    let cardStep = 90;        // px of drag == one full card index
+    let cardSpacing = 110;    // px between neighboring card centers when laid out flat
+    let dragging = false;
+    let axisLocked = null;    // 'x' | 'y' | null
+    let startX = 0, startY = 0, startPosition = 0, lastX = 0, lastT = 0;
+    let liveSpeedSmoothed = 0; // real-time drag speed (0..1), smoothed frame to frame
+    let rafId = null;
+    let dotsEl = null;
+    let glowEl = null;
+
+    function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+    function hexToRgba(hex, alpha){
+      const h = hex.trim().replace('#', '');
+      const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+      const num = parseInt(full, 16);
+      if (Number.isNaN(num)) return `rgba(22, 20, 15, ${alpha})`;
+      const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function updateGlow(index){
+      if (!glowEl) return;
+      const card = cards[index];
+      if (!card) return;
+      const accent = card.style.getPropertyValue('--accent') || '#16140F';
+      glowEl.style.boxShadow = `0 0 130px 85px ${hexToRgba(accent, 0.24)}`;
+    }
+
+    function lerp(a, b, t){ return a + (b - a) * t; }
+
+    // Shortest signed distance from card i to the (continuous) fan position,
+    // wrapped around the deck so the hand loops infinitely instead of
+    // stopping dead at card 1 or card 5 — card 5 "wraps" straight into
+    // card 1 the same way a real deck would cut back around.
+    function wrappedOffset(i, pos){
+      let off = i - pos;
+      off -= count * Math.round(off / count);
+      return off;
+    }
+
+    // Each card gets its own small fixed "personality" — a unique blend of
+    // rotation/depth/offset bias — assigned once. Combined with the
+    // per-swipe burst energy below, this is what keeps every flick's
+    // trajectory looking distinct instead of every card tracing the same
+    // identical path.
+    function ensureSignature(card){
+      if (card._sig) return card._sig;
+      const rand = () => Math.random() * 2 - 1;
+      card._sig = {
+        rot: rand(),
+        spin: rand(),
+        z: rand(),
+        x: rand(),
+        y: Math.random(),
+        // Burst-only personality: how eagerly this card reacts to a flick
+        // (chase) and how it trails on the way back (settle) — different
+        // per card so the deck doesn't move as one rigid unit.
+        chase: Math.random(),
+        settle: Math.random(),
+      };
+      return card._sig;
+    }
+
+    // Cache each card's shirt <img> so we don't re-query the DOM every
+    // animation frame. Its scale is driven independently of the card's
+    // own transform so the shirt can grow past the card edges and
+    // overshoot on arrival without fighting the card's own slide.
+    function ensurePhotoImg(card){
+      if (card._photoImg === undefined){
+        card._photoImg = card.querySelector('.pick__photo img');
+      }
+      return card._photoImg;
+    }
+
+    function render(pos, energy, dt, liveSpeed){
+      energy = clamp(energy || 0, 0, 1);
+      dt = dt || 0;
+      // liveSpeed is the *current*, real-time drag speed (0..1) — separate
+      // from `energy`, which only ever fires once, on release. liveSpeed is
+      // what lets the deck react while the finger is still moving: a slow
+      // drag sits near 0 and the cards just fan gently; a medium-speed drag
+      // pushes it up and the cards start weaving over/under one another;
+      // a fast flick rides it briefly on the way up before release hands
+      // off to the burst-apart physics below.
+      liveSpeed = clamp(liveSpeed || 0, 0, 1);
+      cards.forEach((card, i) => {
+        const offset = wrappedOffset(i, pos);
+        const abs = Math.abs(offset);
+        const isActive = abs < 0.18;
+        // Cards sit on a single flat line and slide sideways past each
+        // other, like a hand dealing cards across a table as their baseline
+        // — the burst physics below is what turns that calm baseline into
+        // a living deck the instant it gets flicked.
+        const baseScale = clamp(1 - abs * 0.16, 0.6, 1);
+        const activeBoost = 1 + 0.08 * clamp(1 - abs / 0.18, 0, 1);
+        let scale = isActive ? baseScale * activeBoost : baseScale;
+
+        // Neighbor "scatter": cards immediately next to whichever card is
+        // nearing center get pushed extra distance apart — peaks right at
+        // the immediate-neighbor spot (abs === 1) and fades out for cards
+        // further away — so the deck visibly parts to make room for the
+        // hero instead of just holding a fixed spacing.
+        const neighborPush = clamp(1 - Math.abs(abs - 1) * 1.5, 0, 1);
+        const scatterPx = cardSpacing * 0.55;
+        let tx = offset * cardSpacing;
+        if (abs > 0.001){
+          tx += (offset / abs) * neighborPush * scatterPx;
+        }
+        let ty = 0;
+        let opacity = clamp(1 - Math.max(0, abs - 2.2) * 1.3, 0, 1);
+
+        // ---------- Speed-reactive "fan" + "weave" (live, pre-release) ----------
+        // A gentle, constant fan angle keys off each card's offset alone —
+        // this is what a slow, careful swipe reveals: the hand gently
+        // fanning open, like spreading cards on a table.
+        const fanRot = clamp(offset, -2.6, 2.6) * 8.5;
+
+        // As drag speed climbs into the medium range, alternating cards lift
+        // and dip out of the flat line and nudge past each other — a woven
+        // over/under motion rather than a straight slide. It fades out for
+        // cards far from center (only the middle of the deck weaves) and
+        // eases back out again at very high speed, where the burst-apart
+        // physics on release should read as the dominant motion instead.
+        const weaveGate = clamp(liveSpeed, 0, 1) * clamp(1.3 - liveSpeed, 0, 1);
+        const weaveEnvelope = clamp(1 - abs / 2.3, 0, 1) * weaveGate;
+        const weaveParity = (i % 2 === 0) ? 1 : -1;
+        ty += weaveParity * weaveEnvelope * 22;
+        tx += weaveParity * weaveEnvelope * 9;
+        scale *= 1 + weaveEnvelope * 0.05;
+
+        // ---------- "Living deck" burst-apart physics ----------
+        // Rather than every card obeying the same decaying energy value on
+        // the same clock, each card chases the shared burst with its own
+        // speed (sig.chase / sig.settle). Fast chasers snap outward almost
+        // immediately; slow chasers lag half a beat behind — and because
+        // they're chasing independently, they also drift back into the
+        // stack at slightly different moments, instead of every card
+        // reforming in unison. That stagger is what sells "deck" instead
+        // of "five synced cards".
+        const sig = ensureSignature(card);
+        if (card._burstOwn === undefined) card._burstOwn = 0;
+        const outness = clamp(abs / 2.2, 0, 1);
+        const risePerSec = lerp(14, 5, sig.chase) * lerp(1, 0.55, outness);   // outward: fast
+        const fallPerSec = lerp(3.5, 1.4, sig.settle) * lerp(1, 0.6, outness); // return: slower, staggered
+        const chaseRate = energy > card._burstOwn ? risePerSec : fallPerSec;
+        const follow = dt > 0 ? clamp(chaseRate * dt, 0, 1) : (energy > card._burstOwn ? 1 : 0);
+        card._burstOwn += (energy - card._burstOwn) * follow;
+        const burst = card._burstOwn;
+
+        // The card nearest dead-center is shielded from almost all of the
+        // burst — the hero should stay put and stay readable while
+        // everything around it flies apart.
+        const heroShield = clamp((abs - 0.16) / 0.55, 0, 1);
+        const kick = burst * heroShield;
+
+        if (kick > 0.001){
+          // Momentum: outer cards travel much further than inner ones, so
+          // a hard flick reads as an explosion radiating outward, not a
+          // uniform shove.
+          const flight = lerp(55, 230, outness);
+          tx += sig.x * kick * flight;
+          ty += (sig.y * 2 - 1) * kick * 90;
+          opacity *= 1 - kick * 0.28;
+        }
+
+        // Large, per-card rotation while airborne — this is the single
+        // biggest thing that sells "tumbling cards" instead of "sliding
+        // panels". Direction/magnitude come from each card's own spin bias
+        // so neighbors never rotate in lockstep.
+        const burstRot = sig.spin * kick * lerp(35, 150, 0.25 + outness * 0.75);
+        // Depth: airborne cards recede slightly (translateZ + a touch of
+        // extra shrink + blur) so the burst reads as scattering into space
+        // around the hero, not just sideways on a flat plane.
+        const burstZ = -kick * 140;
+        const burstScale = 1 - kick * 0.16;
+
+        // The shirt itself grows continuously as its card nears center —
+        // not a subtle hover pop, but a real 40-60% blow-up that peaks
+        // when the card is dead center — and gets a brief overshoot/bounce
+        // from the same burst energy right as it lands, so the hero moment
+        // reads as "arriving" rather than just appearing.
+        const heroCloseness = clamp(1 - abs, 0, 1);
+        const heroOvershoot = energy > 0.001 ? energy * heroCloseness * 1.4 : 0;
+        const heroScale = 1 + 0.55 * heroCloseness + heroOvershoot;
+        // Push the hero toward the viewer through the hand's perspective,
+        // reinforcing the "coming at you" feel from the deeper shadow.
+        const heroZ = 55 * heroCloseness;
+        const photoImg = ensurePhotoImg(card);
+        if (photoImg){
+          photoImg.style.transform = `scale(${heroScale}) translateZ(${heroZ}px)`;
+        }
+
+        // transform + opacity (+ filter while airborne) are the only
+        // properties touched every frame — all compositor-only, which is
+        // what keeps the burst gliding smoothly instead of feeling choppy.
+        // Weave rotation eases out as the burst takes hold, so a flick's
+        // rotation reads as one continuous motion (weave → tumble) instead
+        // of two systems fighting for the card's angle.
+        const weaveRot = weaveParity * weaveEnvelope * 11 * (1 - kick);
+        const totalRot = fanRot + weaveRot + burstRot;
+        card.style.transform =
+          `translate(-50%, -50%) translate3d(${tx}px, ${ty}px, ${burstZ.toFixed(1)}px) rotate(${totalRot.toFixed(2)}deg) scale(${(scale * burstScale).toFixed(3)})`;
+        // Alternating cards weaving past each other need to visibly swap
+        // which one is on top — nudge z-index by weave parity so the
+        // over/under motion actually reads instead of just wobbling in place.
+        card.style.zIndex = String(Math.round(1000 - abs * 10 + kick * 5 + weaveParity * weaveEnvelope * 3));
+        card.style.opacity = String(opacity);
+
+        const blurred = kick > 0.02;
+        if (blurred){
+          card.style.filter = `blur(${(kick * 1.8).toFixed(2)}px)`;
+        } else if (card._pickBlurred){
+          card.style.filter = '';
+        }
+        card._pickBlurred = blurred;
+
+        // Depth (shadow + saturation/brightness) is expressed as CSS classes
+        // with their own CSS transition, so the browser cross-fades them on
+        // its own timeline instead of us re-painting a new box-shadow/filter
+        // string on every animation frame. Only write to the DOM when a
+        // card actually crosses into a new bucket.
+        const isNear = !isActive && abs < 1.35;
+        const hidden = abs >= 2.3;
+        if (card._pickActive !== isActive){
+          card.classList.toggle('is-active', isActive);
+          card._pickActive = isActive;
+        }
+        if (card._pickNear !== isNear){
+          card.classList.toggle('is-near', isNear);
+          card._pickNear = isNear;
+        }
+        if (card._pickHidden !== hidden){
+          card.style.pointerEvents = hidden ? 'none' : 'auto';
+          card.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+          card._pickHidden = hidden;
+        }
+      });
+      if (dotsEl){
+        const nearest = ((Math.round(pos) % count) + count) % count;
+        if (dotsEl._pickActive !== nearest){
+          Array.from(dotsEl.children).forEach((dot, i) => {
+            dot.classList.toggle('is-active', i === nearest);
+          });
+          dotsEl._pickActive = nearest;
+        }
+      }
+    }
+
+    function updateStep(){
+      cardStep = clamp(pickHand.clientWidth * 0.34, 70, 150);
+      cardSpacing = clamp(pickHand.clientWidth * 0.4, 90, 175);
+    }
+
+    function stopAnimation(){
+      if (rafId){ cancelAnimationFrame(rafId); rafId = null; }
+    }
+
+    // Spring tuned like a native card-stack (SwiftUI-style response/damping),
+    // then converted to stiffness/damping so the glide is driven by real
+    // elapsed time rather than "per frame". That's what makes it look the
+    // same — and stay smooth — on a 60Hz, 90Hz or 120Hz phone alike, instead
+    // of speeding up/slowing down (i.e. feeling choppy) with the frame rate.
+    // Response/damping are no longer fixed: springTo() blends between a
+    // slow, controlled pair and a fast, springier pair based on how hard the
+    // deck was flicked, so a slow swipe glides gently into place while a
+    // fast flick snaps across the screen and settles with a bit of overshoot.
+    const SPRING_RESPONSE_SLOW = 0.46;  // seconds to feel "arrived" — gentle drag/tap
+    const SPRING_RESPONSE_FAST = 0.22;  // seconds to feel "arrived" — hard flick
+    const SPRING_DAMPING_SLOW = 0.92;   // 1.0 = no overshoot
+    const SPRING_DAMPING_FAST = 0.66;   // more overshoot/bounce on energetic flicks
+    const MAX_STEP = 1 / 30; // clamp dt so a stalled tab can't cause a jump
+
+    function springTo(target, initialVelocity, energy){
+      stopAnimation();
+      const nextActive = ((Math.round(target) % count) + count) % count;
+      if (nextActive !== activeIndex){
+        try { if (navigator.vibrate) navigator.vibrate(8); } catch(err){}
+      }
+      activeIndex = nextActive;
+      updateGlow(activeIndex);
+      if (reduceMotion){
+        position = target;
+        render(position, 0);
+        return;
+      }
+      energy = clamp(energy || 0, 0, 1);
+      let v = initialVelocity || 0;
+      let burst = energy;
+      const response = lerp(SPRING_RESPONSE_SLOW, SPRING_RESPONSE_FAST, energy);
+      const damping = lerp(SPRING_DAMPING_SLOW, SPRING_DAMPING_FAST, energy);
+      const omega = (2 * Math.PI) / response;
+      const stiffness = omega * omega;
+      const dampingCoef = 2 * damping * omega;
+      const burstDecay = lerp(4.5, 9.5, energy); // faster flicks also regroup a touch quicker
+      let last = null;
+      function step(now){
+        if (last === null) last = now;
+        const dt = Math.min((now - last) / 1000, MAX_STEP);
+        last = now;
+        const dist = target - position;
+        const accel = dist * stiffness - v * dampingCoef;
+        v += accel * dt;
+        position += v * dt;
+        burst *= Math.exp(-burstDecay * dt);
+        if (burst < 0.004) burst = 0;
+        render(position, burst, dt);
+        if (Math.abs(dist) < 0.001 && Math.abs(v) < 0.001 && burst === 0){
+          position = target;
+          render(position, 0, dt);
+          rafId = null;
+          return;
+        }
+        rafId = requestAnimationFrame(step);
+      }
+      rafId = requestAnimationFrame(step);
+    }
+
+    function goTo(index){
+      // A tap on a card or dot still gets a small, consistent burst of
+      // "deck" energy so the hand always feels alive when it regroups —
+      // just gentler than a real flick. Travel by the shortest circular
+      // path from wherever the hand currently sits.
+      const target = Math.round(position + wrappedOffset(index, position));
+      springTo(target, 0, 0.3);
+    }
+
+    function onPointerDown(e){
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      dragging = true;
+      axisLocked = null;
+      startX = e.clientX; startY = e.clientY;
+      startPosition = position;
+      lastX = e.clientX; lastT = performance.now();
+      velocity = 0;
+      liveSpeedSmoothed = 0;
+      stopAnimation();
+      pickHand.classList.add('is-dragging');
+      try { pickHand.setPointerCapture(e.pointerId); } catch(err){}
+    }
+
+    function onPointerMove(e){
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (axisLocked === null){
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        axisLocked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        if (axisLocked === 'y'){
+          dragging = false;
+          pickHand.classList.remove('is-dragging');
+          return;
+        }
+      }
+      if (axisLocked !== 'x') return;
+      // No clamping and no rubber-banding at the ends — the hand loops
+      // infinitely through the same 5 cards, so dragging past "card 5"
+      // just keeps cutting back around to card 1, like a real deck.
+      position = startPosition - dx / cardStep;
+      const now = performance.now();
+      const dt = now - lastT;
+      if (dt > 4){
+        velocity = (e.clientX - lastX) / dt;
+        lastX = e.clientX; lastT = now;
+        // Smooth the instantaneous speed so a single noisy touch sample
+        // doesn't make the weave flicker — this is the live progression
+        // the person actually feels while dragging: slow drag stays near
+        // 0 (gentle fan only), a purposeful medium swipe rides up into the
+        // weave range, and a hard flick blows past it toward release.
+        const instSpeed = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+        liveSpeedSmoothed = lerp(liveSpeedSmoothed, instSpeed, 0.4);
+      }
+      render(position, 0, 0, liveSpeedSmoothed);
+    }
+
+    // Speed (in px/ms) above which a release counts as a "full" flick —
+    // tuned against typical mobile swipe speeds. Below this, energy scales
+    // down toward 0 for a slow, controlled release with no burst at all.
+    const FLICK_SPEED_REF = 1.0;
+
+    function onPointerUp(e){
+      if (!dragging) return;
+      dragging = false;
+      pickHand.classList.remove('is-dragging');
+      if (axisLocked !== 'x'){ axisLocked = null; return; }
+      // velocity is px/ms from the drag; convert to index-units/second so it
+      // can be handed straight to the time-based spring below.
+      const indexPerSecond = (velocity * 1000) / cardStep;
+      const projected = position - (velocity * 140) / cardStep;
+      const target = Math.round(projected);
+      // Sharpen the curve (rather than a flat linear map) so a genuine
+      // flick disproportionately out-bursts a lazy drag — small releases
+      // barely ripple the deck, hard flicks make it explode.
+      const linearEnergy = clamp(Math.abs(velocity) / FLICK_SPEED_REF, 0, 1);
+      const energy = Math.pow(linearEnergy, 0.72);
+      springTo(target, -indexPerSecond, energy);
+      axisLocked = null;
+    }
+
+    function buildDots(){
+      dotsEl = document.createElement('div');
+      dotsEl.className = 'pick__dots';
+      dotsEl.setAttribute('role', 'tablist');
+      dotsEl.setAttribute('aria-label', 'Choose a colorway');
+      for (let i = 0; i < count; i++){
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'pick__dot';
+        dot.setAttribute('aria-label', `Show card ${i + 1} of ${count}`);
+        dot.addEventListener('click', () => goTo(i));
+        dotsEl.appendChild(dot);
+      }
+      pickHand.insertAdjacentElement('afterend', dotsEl);
+    }
+
+    function buildGlow(){
+      glowEl = document.createElement('div');
+      glowEl.className = 'pick__glow';
+      glowEl.setAttribute('aria-hidden', 'true');
+      pickHand.insertAdjacentElement('afterbegin', glowEl);
+      updateGlow(activeIndex);
+    }
+
+    // Single delegated (capturing) click handler for every card, instead of
+    // one listener per card — cards.indexOf() is O(5) here, far cheaper
+    // than the cost of maintaining 5 separate listeners, and it means
+    // attach()/detach() cycles (resizing back and forth across the
+    // breakpoint) never accumulate stale closures.
+    function onCardsClick(e){
+      if (dragging) return;
+      const card = e.target.closest('.pick__card');
+      if (!card) return;
+      const index = cards.indexOf(card);
+      if (index === -1) return;
+      const abs = Math.abs(wrappedOffset(index, position));
+      if (abs > 0.18){
+        e.preventDefault();
+        e.stopPropagation();
+        goTo(index);
+      }
+    }
+
+    function attach(){
+      if (active) return;
+      active = true;
+      updateStep();
+      buildDots();
+      buildGlow();
+      pickHand.addEventListener('click', onCardsClick, true);
+      pickHand.addEventListener('pointerdown', onPointerDown, { passive: true });
+      pickHand.addEventListener('pointermove', onPointerMove, { passive: true });
+      pickHand.addEventListener('pointerup', onPointerUp, { passive: true });
+      pickHand.addEventListener('pointercancel', onPointerUp, { passive: true });
+      position = activeIndex;
+      render(position);
+    }
+
+    function detach(){
+      if (!active) return;
+      active = false;
+      stopAnimation();
+      pickHand.removeEventListener('click', onCardsClick, true);
+      pickHand.removeEventListener('pointerdown', onPointerDown);
+      pickHand.removeEventListener('pointermove', onPointerMove);
+      pickHand.removeEventListener('pointerup', onPointerUp);
+      pickHand.removeEventListener('pointercancel', onPointerUp);
+      cards.forEach(card => {
+        card.style.transform = '';
+        card.style.zIndex = '';
+        card.style.opacity = '';
+        card.style.filter = '';
+        card.style.pointerEvents = '';
+        card.removeAttribute('aria-hidden');
+        card.classList.remove('is-active', 'is-near');
+        card._pickActive = card._pickNear = card._pickHidden = card._pickBlurred = undefined;
+        card._burstOwn = 0;
+        const photoImg = ensurePhotoImg(card);
+        if (photoImg) photoImg.style.transform = '';
+      });
+      if (dotsEl){ dotsEl.remove(); dotsEl = null; }
+      if (glowEl){ glowEl.remove(); glowEl = null; }
+    }
+
+    function sync(){
+      if (window.innerWidth <= BREAKPOINT) attach();
+      else detach();
+      if (active) updateStep();
+    }
+
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(sync, 150);
+    });
+
+    sync();
+  })();
+
+  // Marquee content (duplicated for seamless loop)
+  function buildMarquee(el, text, count){
+    let html = '';
+    for (let i = 0; i < count; i++){
+      html += `<span class="marquee__item">${text} <span class="pip">★</span></span>`;
+    }
+    el.innerHTML = html + html; // duplicate once for seamless -50% loop
+  }
+  buildMarquee(document.getElementById('marquee1'), 'PLAY YOUR CARDS RIGHT', 6);
+
+  // Hamburger menu toggle
+  const hamburgerBtn = document.getElementById('hamburgerBtn');
+  const mobileNav = document.getElementById('mobileNav');
+  hamburgerBtn.addEventListener('click', () => {
+    const isOpen = mobileNav.classList.toggle('is-open');
+    hamburgerBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+  mobileNav.addEventListener('click', (e) => {
+    if (e.target.tagName === 'A') {
+      mobileNav.classList.remove('is-open');
+      hamburgerBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Sticky header: shrink slightly on scroll
+  const siteHeader = document.querySelector('.site-header');
+  const SCROLL_THRESHOLD = 24;
+  let headerTicking = false;
+  function updateHeaderState(){
+    siteHeader.classList.toggle('is-scrolled', window.scrollY > SCROLL_THRESHOLD);
+    headerTicking = false;
+  }
+  window.addEventListener('scroll', () => {
+    if (!headerTicking){
+      window.requestAnimationFrame(updateHeaderState);
+      headerTicking = true;
+    }
+  }, { passive: true });
+  updateHeaderState();
+
+  // ---------- Scroll-triggered reveal (fade up + subtle scale) ----------
+  // Applies to any element with the .reveal class. Fires once per element,
+  // is fully passive/observer-driven (no scroll listeners), and respects
+  // prefers-reduced-motion.
+  (function(){
+    const items = document.querySelectorAll('.reveal');
+    if (!items.length) return;
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion || !('IntersectionObserver' in window)){
+      items.forEach(el => el.classList.add('is-visible'));
+      return;
+    }
+
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const el = entry.target;
+        el.classList.add('is-revealing', 'is-visible');
+        // Drop the will-change hint once the transition settles, so we're
+        // not holding a compositor layer open for content that's done animating.
+        const clearWillChange = (e) => {
+          if (e.target !== el || e.propertyName !== 'transform') return;
+          el.classList.remove('is-revealing');
+          el.removeEventListener('transitionend', clearWillChange);
+        };
+        el.addEventListener('transitionend', clearWillChange);
+        io.unobserve(el); // reveal once, never re-trigger
+      });
+    }, { threshold: 0.16, rootMargin: '0px 0px -10% 0px' });
+
+    // Wait two frames before observing so the browser paints the
+    // hidden (opacity:0) state at least once first. Without this,
+    // elements already in the viewport on load (top of the page)
+    // can be marked visible before that first paint happens, so
+    // they pop straight into place instead of animating in.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        items.forEach(el => io.observe(el));
+      });
+    });
+  })();
+</script>
+</body>
+</html>
