@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
 <title>WILDCARD | Product</title>
 <meta name="description" content="Shop the WILDCARD Collection. Premium heavyweight raglans in five colorways, each carrying its own mindset.">
 <link rel="canonical" href="https://wildcardshit.com/product.html">
@@ -65,6 +65,8 @@
     -webkit-font-smoothing:antialiased;
     overflow-x:hidden;
     position:relative;
+    touch-action:pan-y;
+    overscroll-behavior-y:none;
   }
 
   /* ---------- GLOBAL W WATERMARK LAYER ---------- */
@@ -687,7 +689,7 @@
 
   <header class="site-header">
     <nav class="site-header__nav">
-      <a href="home.html">Shop</a>
+      <a href="home.html">Home</a>
       <a href="lookbook.html">Lookbook</a>
       <a href="index.html">Enter Room</a>
     </nav>
@@ -696,7 +698,7 @@
     </button>
     <div class="site-header__logo"><a href="home.html" aria-label="WILDCARD home"><img src="images/logo.png" alt="Wildcard" width="839" height="160" loading="eager" decoding="async" fetchpriority="high"></a></div>
     <div class="site-header__icons">
-      <a href="login.html" class="icon-btn icon-btn--login" aria-label="Login">
+      <a class="icon-btn icon-btn--login" aria-label="Login" aria-disabled="true" role="link" tabindex="-1" style="pointer-events:none;">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
       </a>
       <button class="icon-btn" id="cartBtn" aria-label="Cart" type="button" style="position:relative;">
@@ -708,10 +710,10 @@
 
   <nav class="mobile-nav" id="mobileNav">
     <div class="mobile-nav__inner">
-      <a href="home.html#shop">Shop</a>
+      <a href="home.html#shop">Home</a>
       <a href="lookbook.html">Lookbook</a>
       <a href="index.html">Enter Room</a>
-      <a href="login.html" class="mobile-nav__login">Login</a>
+      <a class="mobile-nav__login" aria-disabled="true" role="link" tabindex="-1" style="pointer-events:none;">Login</a>
     </div>
   </nav>
 
@@ -720,7 +722,7 @@
     <nav class="breadcrumb">
       <a href="home.html">Home</a>
       <span>/</span>
-      <a href="home.html#shop">Shop</a>
+      <a href="home.html#shop">Home</a>
       <span>/</span>
       <span class="breadcrumb__current" id="crumbName">Product</span>
     </nav>
