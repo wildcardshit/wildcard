@@ -291,7 +291,9 @@
 
     foot.innerHTML =
       '<div class="wc-cart__subtotal"><span>Subtotal</span><span>$' + subtotal(items).toFixed(0) + '</span></div>' +
-      '<button type="button" class="wc-cart__checkout" id="wcCheckoutBtn">Checkout</button>' +
+      '<button type="button" class="wc-cart__checkout" id="wcCheckoutBtn"' + (checkoutInFlight ? ' disabled' : '') + '>' +
+        (checkoutInFlight ? 'Redirecting…' : 'Checkout') +
+      '</button>' +
       '<p class="wc-cart__note">Shipping &amp; taxes calculated at checkout.</p>';
 
     body.querySelectorAll('.wc-cart__line').forEach(function (line) {
@@ -321,12 +323,18 @@
   }
 
   var CHECKOUT_ENDPOINT = '/api/create-checkout-session';
+  // Tracks an in-flight checkout across re-renders (e.g. cross-tab cart
+  // sync, or a qty change while the request is pending) so the button
+  // can't come back enabled and let someone fire a duplicate request.
+  var checkoutInFlight = false;
 
   function startCheckout(btn) {
+    if (checkoutInFlight) return;
+
     var cartItems = readCart();
     if (!cartItems.length) return;
 
-    var originalLabel = btn.textContent;
+    checkoutInFlight = true;
     btn.disabled = true;
     btn.textContent = 'Redirecting…';
 
@@ -353,8 +361,15 @@
         window.location.href = data.url;
       })
       .catch(function (err) {
-        btn.disabled = false;
-        btn.textContent = originalLabel;
+        checkoutInFlight = false;
+        // The button may have been replaced by a re-render while the
+        // request was in flight — re-query it rather than trust the
+        // stale reference, and only touch it if it still exists.
+        var currentBtn = document.getElementById('wcCheckoutBtn');
+        if (currentBtn) {
+          currentBtn.disabled = false;
+          currentBtn.textContent = 'Checkout';
+        }
         showToast(err.message || "Checkout failed — please try again.");
       });
   }
