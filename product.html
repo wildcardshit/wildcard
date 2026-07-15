@@ -674,6 +674,13 @@
 
   gtag('config', 'G-3SLJZH3SVM');
 </script>
+<!-- Product structured data: populated at runtime from the resolved
+     colorway (see the "JSON-LD structured data" block at the end of the
+     page script) since this single template serves five product URLs
+     via ?id=. Placeholders live here so the tags are in <head> per
+     Schema.org / Google guidance; Googlebot renders JS before indexing. -->
+<script type="application/ld+json" id="product-schema">{}</script>
+<script type="application/ld+json" id="breadcrumb-schema">{}</script>
 </head>
 <body>
 
@@ -991,6 +998,73 @@
     }
   }, { passive: true });
   updateHeaderState();
+
+  // ---------- JSON-LD structured data (Product + BreadcrumbList) ----------
+  // Reads directly from the already-populated DOM / resolved `product`
+  // object above, so the structured data can never drift from what's
+  // actually rendered for this colorway. Injected into the placeholder
+  // <script> tags sitting in <head>.
+  (function(){
+    const pageUrl = window.location.origin + window.location.pathname + window.location.search;
+
+    const priceMatch = (document.getElementById('productPrice').textContent || '').match(/[\d.]+/);
+    const price = priceMatch ? priceMatch[0] : String(product.price);
+
+    const imageUrl = productImage.src; // resolved to an absolute URL by the browser
+
+    const productSchema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": document.getElementById('productName').textContent.trim(),
+      "description": document.getElementById('productDesc').textContent.trim(),
+      "image": [imageUrl],
+      "url": pageUrl,
+      "brand": { "@type": "Brand", "name": "WILDCARD" },
+      "offers": {
+        "@type": "Offer",
+        "url": pageUrl,
+        "priceCurrency": "USD",
+        "price": price,
+        "availability": "https://schema.org/InStock",
+        "seller": { "@type": "Organization", "name": "WILDCARD" }
+      }
+    };
+    if (product.sku) productSchema.sku = product.sku; // only added if the product data actually has one
+
+    const breadcrumbItems = [];
+    const breadcrumbNav = document.querySelector('nav.breadcrumb');
+    if (breadcrumbNav) {
+      breadcrumbNav.querySelectorAll('a').forEach((a) => {
+        breadcrumbItems.push({
+          "@type": "ListItem",
+          "position": breadcrumbItems.length + 1,
+          "name": a.textContent.trim(),
+          "item": a.href
+        });
+      });
+      const current = breadcrumbNav.querySelector('.breadcrumb__current');
+      if (current) {
+        breadcrumbItems.push({
+          "@type": "ListItem",
+          "position": breadcrumbItems.length + 1,
+          "name": current.textContent.trim(),
+          "item": pageUrl
+        });
+      }
+    }
+
+    const breadcrumbSchema = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": breadcrumbItems
+    };
+
+    const productSchemaEl = document.getElementById('product-schema');
+    if (productSchemaEl) productSchemaEl.textContent = JSON.stringify(productSchema);
+
+    const breadcrumbSchemaEl = document.getElementById('breadcrumb-schema');
+    if (breadcrumbSchemaEl) breadcrumbSchemaEl.textContent = JSON.stringify(breadcrumbSchema);
+  })();
 </script>
 </body>
 </html>
