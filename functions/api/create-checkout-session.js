@@ -108,76 +108,49 @@ function buildStripeBody(lines, origin) {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  // TEMP DEBUG: catch-all so unexpected exceptions also return diagnostic
-  // info in development instead of just failing silently / generically.
-  // Remove this outer try/catch (restore the un-wrapped body below) once
-  // the issue is diagnosed.
-  try {
-    if (!env.STRIPE_SECRET_KEY) {
-      return json({ error: 'Server is not configured for checkout yet.' }, 500);
-    }
-
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: 'Request body must be valid JSON.' }, 400);
-    }
-
-    let lines;
-    try {
-      lines = validateCart(body && body.items);
-    } catch (err) {
-      return json({ error: err.message }, 400);
-    }
-
-    const origin = new URL(request.url).origin;
-    const stripeBody = buildStripeBody(lines, origin);
-
-    let stripeResponse;
-    try {
-      stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: stripeBody
-      });
-    } catch {
-      return json({ error: 'Could not reach Stripe. Please try again.' }, 502);
-    }
-
-    const stripeData = await stripeResponse.json();
-
-    if (!stripeResponse.ok) {
-      // TEMP DEBUG: surfacing raw Stripe error internals to the client.
-      // Remove this block (and revert to the generic message) once the
-      // issue is diagnosed.
-      const stripeErr = stripeData && stripeData.error ? stripeData.error : {};
-      return json({
-        error: 'Stripe could not create the checkout session.',
-        debug: {
-          message: stripeErr.message || null,
-          type: stripeErr.type || null,
-          code: stripeErr.code || null,
-          param: stripeErr.param || null,
-          requestId: stripeResponse.headers.get('request-id') || null
-        }
-      }, 502);
-    }
-
-    return json({ url: stripeData.url });
-  } catch (err) {
-    // TEMP DEBUG: unexpected exception, not a Stripe API error.
-    return json({
-      error: 'Unexpected server error.',
-      debug: {
-        message: err && err.message ? err.message : String(err),
-        stack: err && err.stack ? err.stack : null
-      }
-    }, 500);
+  if (!env.STRIPE_SECRET_KEY) {
+    return json({ error: 'Server is not configured for checkout yet.' }, 500);
   }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Request body must be valid JSON.' }, 400);
+  }
+
+  let lines;
+  try {
+    lines = validateCart(body && body.items);
+  } catch (err) {
+    return json({ error: err.message }, 400);
+  }
+
+  const origin = new URL(request.url).origin;
+  const stripeBody = buildStripeBody(lines, origin);
+
+  let stripeResponse;
+  try {
+    stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: stripeBody
+    });
+  } catch {
+    return json({ error: 'Could not reach Stripe. Please try again.' }, 502);
+  }
+
+  const stripeData = await stripeResponse.json();
+
+  if (!stripeResponse.ok) {
+    // Don't leak raw Stripe error internals to the client.
+    return json({ error: 'Stripe could not create the checkout session.' }, 502);
+  }
+
+  return json({ url: stripeData.url });
 }
 
 // Any method other than POST is not supported by this endpoint.
