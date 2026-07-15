@@ -292,7 +292,7 @@
     foot.innerHTML =
       '<div class="wc-cart__subtotal"><span>Subtotal</span><span>$' + subtotal(items).toFixed(0) + '</span></div>' +
       '<button type="button" class="wc-cart__checkout" id="wcCheckoutBtn"' + (checkoutInFlight ? ' disabled' : '') + '>' +
-        (checkoutInFlight ? 'Redirecting…' : 'Checkout') +
+        (checkoutInFlight ? 'Creating Secure Checkout…' : 'Checkout') +
       '</button>' +
       '<p class="wc-cart__note">Shipping &amp; taxes calculated at checkout.</p>';
 
@@ -336,7 +336,7 @@
 
     checkoutInFlight = true;
     btn.disabled = true;
-    btn.textContent = 'Redirecting…';
+    btn.textContent = 'Creating Secure Checkout…';
 
     var payload = {
       items: cartItems.map(function (item) {
