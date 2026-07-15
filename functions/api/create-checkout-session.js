@@ -1,34 +1,25 @@
 /**
  * POST /api/create-checkout-session
  *
- * Cloudflare Pages Function. Accepts a cart from the frontend, re-prices
- * every line item against the server-side catalog below (client-sent
- * prices are never trusted), creates a Stripe Checkout Session via
- * Stripe's REST API (no SDK), and returns only the Session URL as JSON.
+ * Cloudflare Pages Function. Accepts the cart from the frontend, re-prices
+ * every line item against the server-side catalog below (the client's price
+ * is never trusted), creates a Stripe Checkout Session, and returns only
+ * the Session URL as JSON.
  *
  * Scope, on purpose:
- *   - No redirect happens here — the frontend sends the customer to the
- *     returned URL.
- *   - No webhooks, no inventory, no admin, no orders, no shipping, no
- *     customer records.
- *   - Every failure path returns JSON. The Worker never throws an
- *     uncaught exception, so Cloudflare never substitutes its own HTML
- *     502 page.
+ *   - No redirect happens here — the frontend is responsible for sending
+ *     the customer to the returned URL.
+ *   - No webhooks, no order persistence, no inventory changes, no admin UI.
+ *   - No existing frontend files are touched by this function.
  *
  * Required Cloudflare Pages environment variable:
- *   STRIPE_SECRET_KEY — Stripe secret key (sk_live_... / sk_test_...)
- *
- * Optional Cloudflare Pages environment variable:
- *   ENVIRONMENT — set to "development" to include raw Stripe error
- *   detail (message/type/code/param/request id) in error responses.
- *   Leave unset (or anything other than "development") in production so
- *   internal Stripe error detail is never exposed to customers.
+ *   STRIPE_SECRET_KEY  — your Stripe secret key (sk_live_... / sk_test_...)
  */
 
 // ---------- Server-side catalog (source of truth for price + product info) ----------
-// Mirrors the PRODUCTS array in product.html. Keep in sync manually if
-// that file changes — this catalog is what actually determines what the
-// customer is charged, never anything sent from the browser.
+// Mirrors the PRODUCTS array in product.html. Keep in sync manually if that
+// file changes — this catalog is what actually determines what the customer
+// is charged, never the numbers sent from the browser.
 const CATALOG = {
   black:  { label: 'BLACK',  motto: 'PLAY YOUR CARDS RIGHT',            priceCents: 4400, img: 'images/black-shirt.png' },
   red:    { label: 'RED',    motto: 'FACE YOUR FEARS',                  priceCents: 4400, img: 'images/red-shirt.png' },
@@ -48,15 +39,11 @@ function json(data, status = 200) {
   });
 }
 
-function isDev(env) {
-  return env && env.ENVIRONMENT === 'development';
-}
-
 /**
  * Validates the raw cart payload against the server catalog and returns a
  * clean list of { id, size, qty, catalogEntry } lines, using only
- * server-known prices and names. Throws a user-safe message on any
- * invalid input — callers must catch this.
+ * server-known prices and names. Throws with a user-safe message on any
+ * invalid input.
  */
 function validateCart(items) {
   if (!Array.isArray(items) || items.length === 0) {
@@ -93,7 +80,7 @@ function validateCart(items) {
 
 /**
  * Builds the x-www-form-urlencoded body Stripe's REST API expects for
- * Checkout Session creation, using bracket notation for nested/array
+ * checkout session creation, using bracket notation for nested/array
  * fields (line_items[0][price_data][...], etc).
  */
 function buildStripeBody(lines, origin) {
@@ -121,11 +108,12 @@ function buildStripeBody(lines, origin) {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  // Top-level guard: no matter what throws below, we always return a
-  // JSON Response. Letting an exception escape this handler is what
-  // causes Cloudflare to substitute its own HTML 502 page.
+  // TEMP DEBUG: catch-all so unexpected exceptions also return diagnostic
+  // info in development instead of just failing silently / generically.
+  // Remove this outer try/catch (restore the un-wrapped body below) once
+  // the issue is diagnosed.
   try {
-    if (!env || !env.STRIPE_SECRET_KEY) {
+    if (!env.STRIPE_SECRET_KEY) {
       return json({ error: 'Server is not configured for checkout yet.' }, 500);
     }
 
@@ -143,13 +131,7 @@ export async function onRequestPost(context) {
       return json({ error: err.message }, 400);
     }
 
-    let origin;
-    try {
-      origin = new URL(request.url).origin;
-    } catch {
-      return json({ error: 'Could not determine request origin.' }, 400);
-    }
-
+    const origin = new URL(request.url).origin;
     const stripeBody = buildStripeBody(lines, origin);
 
     let stripeResponse;
@@ -166,47 +148,35 @@ export async function onRequestPost(context) {
       return json({ error: 'Could not reach Stripe. Please try again.' }, 502);
     }
 
-    // Stripe's response body must be parsed defensively too — a
-    // truncated or non-JSON response here would otherwise throw
-    // uncaught.
-    let stripeData;
-    try {
-      stripeData = await stripeResponse.json();
-    } catch {
-      return json({ error: 'Stripe returned an unreadable response.' }, 502);
-    }
+    const stripeData = await stripeResponse.json();
 
     if (!stripeResponse.ok) {
-      const stripeErr = (stripeData && stripeData.error) || {};
-      const payload = { error: 'Stripe could not create the checkout session.' };
-      if (isDev(env)) {
-        // Development only: surface the exact Stripe error detail.
-        payload.stripe = {
+      // TEMP DEBUG: surfacing raw Stripe error internals to the client.
+      // Remove this block (and revert to the generic message) once the
+      // issue is diagnosed.
+      const stripeErr = stripeData && stripeData.error ? stripeData.error : {};
+      return json({
+        error: 'Stripe could not create the checkout session.',
+        debug: {
           message: stripeErr.message || null,
           type: stripeErr.type || null,
           code: stripeErr.code || null,
           param: stripeErr.param || null,
           requestId: stripeResponse.headers.get('request-id') || null
-        };
-      }
-      return json(payload, 502);
-    }
-
-    if (!stripeData || typeof stripeData.url !== 'string') {
-      return json({ error: 'Stripe session created without a checkout URL.' }, 502);
+        }
+      }, 502);
     }
 
     return json({ url: stripeData.url });
   } catch (err) {
-    // Final safety net for anything unanticipated above.
-    const payload = { error: 'Unexpected server error.' };
-    if (isDev(env)) {
-      payload.debug = {
+    // TEMP DEBUG: unexpected exception, not a Stripe API error.
+    return json({
+      error: 'Unexpected server error.',
+      debug: {
         message: err && err.message ? err.message : String(err),
         stack: err && err.stack ? err.stack : null
-      };
-    }
-    return json(payload, 500);
+      }
+    }, 500);
   }
 }
 
