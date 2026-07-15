@@ -630,19 +630,8 @@
   .social-row a:nth-child(3):hover{ background:var(--c-green); border-color:var(--c-green); color:var(--paper); }
   .social-row a:hover{ transform:translateY(-3px); }
 
-  /* ---------- SCROLL REVEAL ---------- */
-  .reveal{
-    opacity:0;
-    transform:translateY(28px) scale(0.965);
-    transition:opacity 0.9s cubic-bezier(.16,1,.3,1), transform 0.9s cubic-bezier(.16,1,.3,1);
-    transition-delay:calc(var(--d, 0) * 0.09s);
-  }
-  .reveal.is-revealing{ will-change:opacity, transform; }
-  .reveal.is-visible{ opacity:1; transform:translateY(0) scale(1); }
-
   @media (prefers-reduced-motion: reduce){
     html{ scroll-behavior:auto; }
-    .reveal{ opacity:1 !important; transform:none !important; transition:none !important; }
     .site-header, .site-header__logo img, .site-header__nav a::after,
     .hamburger-btn svg line, .mobile-nav, .mobile-nav a, .icon-btn{ transition:none; }
     .product__cta.is-popping, .cart-count.is-popping{ animation:none; }
@@ -778,14 +767,14 @@
       </div>
     </section>
 
-    <section class="product__swatches reveal" style="--d:3">
+    <section class="product__swatches">
       <p class="swatch-label">Other Colorways</p>
       <div class="swatch-row" id="swatchRow"></div>
     </section>
 
   </main>
 
-  <div class="support-strip reveal" style="--d:0">
+  <div class="support-strip">
     <p class="support-strip__label">Support</p>
     <span class="support-strip__rule"></span>
     <a href="mailto:support@wildcardshit.com" class="support-strip__email">support@wildcardshit.com</a>
@@ -796,7 +785,7 @@
 
       <div class="site-footer__grid">
 
-        <div class="site-footer__brand reveal" style="--d:0">
+        <div class="site-footer__brand">
           <span class="site-footer__logo">WILDCARD</span>
           <p class="site-footer__tagline">Every color carries a different energy. Choose your WILDCARD.</p>
           <div class="social-row">
@@ -806,14 +795,14 @@
           </div>
         </div>
 
-        <nav class="site-footer__col reveal" style="--d:1">
+        <nav class="site-footer__col">
           <p class="site-footer__heading">Shop</p>
           <a href="home.html#shop">The Collection</a>
           <a href="lookbook.html">Lookbook</a>
           <a href="contact.html">Contact</a>
         </nav>
 
-        <nav class="site-footer__col reveal" style="--d:2">
+        <nav class="site-footer__col">
           <p class="site-footer__heading">Legal</p>
           <a href="privacy.html">Privacy Policy</a>
           <a href="shipping.html">Shipping Policy</a>
@@ -824,7 +813,7 @@
 
       <div class="site-footer__divider"></div>
 
-      <div class="site-footer__bottom reveal" style="--d:3">
+      <div class="site-footer__bottom">
         <p class="site-footer__copy">© 2026 Wildcard · wildcardshit.com</p>
         <p class="site-footer__copy">Designed for the deck.</p>
       </div>
@@ -991,35 +980,6 @@
     }
   }, { passive: true });
   updateHeaderState();
-
-  // ---------- Scroll-triggered reveal (fade up + subtle scale) ----------
-  (function(){
-    const items = document.querySelectorAll('.reveal');
-    if (!items.length) return;
-
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion || !('IntersectionObserver' in window)){
-      items.forEach(el => el.classList.add('is-visible'));
-      return;
-    }
-
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (!entry.isIntersecting) return;
-        const el = entry.target;
-        el.classList.add('is-revealing', 'is-visible');
-        const clearWillChange = (e) => {
-          if (e.target !== el || e.propertyName !== 'transform') return;
-          el.classList.remove('is-revealing');
-          el.removeEventListener('transitionend', clearWillChange);
-        };
-        el.addEventListener('transitionend', clearWillChange);
-        io.unobserve(el);
-      });
-    }, { threshold: 0.16, rootMargin: '0px 0px -10% 0px' });
-
-    items.forEach(el => io.observe(el));
-  })();
 </script>
 </body>
 </html>
