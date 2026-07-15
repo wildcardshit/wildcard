@@ -6685,11 +6685,24 @@
   window.addEventListener('touchmove', e=>{ const t=e.touches[0]; onMove(t.clientX,t.clientY); }, {passive:true});
   window.addEventListener('touchend', onUp);
 
-  window.addEventListener('resize', ()=>{
+  // A window drag-resize can fire this event many times per second; each
+  // call used to run renderer.setSize() synchronously, which reallocates
+  // the WebGL framebuffer every single time. Coalescing to one resize per
+  // animation frame (via rAF) keeps the same end result — the canvas is
+  // still resized live as you drag, just without doing that expensive
+  // reallocation more often than the screen can even show a new frame.
+  let resizePending = false;
+  function applyResize(){
+    resizePending = false;
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.fov = fovForAspect(camera.aspect);
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+  window.addEventListener('resize', ()=>{
+    if(resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(applyResize);
   });
 
   // ---------- Enter button ----------
@@ -7939,8 +7952,9 @@
 
   // ---------- Animate ----------
   const clock = new THREE.Clock();
+  let rafHandle = null;
   function animate(){
-    requestAnimationFrame(animate);
+    rafHandle = requestAnimationFrame(animate);
     const dt = clock.getDelta();
     const t = clock.elapsedTime;
     // Single timestamp shared by every subsystem driven off this frame
@@ -8363,6 +8377,27 @@
   }, 400);
 
   animate();
+
+  // ---------- Pause rendering while the tab is hidden ----------
+  // The render loop above runs continuously by design (camera drift, dust
+  // motes, hologram, etc. never stop animating). That's correct while the
+  // scene is visible, but a backgrounded tab was still paying full
+  // GPU/CPU cost for frames nobody can see. Cancelling the pending RAF on
+  // hide (and letting animate() simply stop re-scheduling itself) removes
+  // that wasted work with zero visual difference; clock.getDelta() is
+  // drained once on return so the first frame back doesn't see a huge dt
+  // and jump animations forward to "catch up".
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden){
+      if(rafHandle !== null){
+        cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+    } else if(rafHandle === null){
+      clock.getDelta();
+      animate();
+    }
+  });
 })();
 </script>
 
