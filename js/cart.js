@@ -164,6 +164,7 @@
   transition:background .2s ease,transform .2s ease;font-family:var(--font-body,sans-serif);}\
 .wc-cart__checkout:hover{background:var(--wild-red,#EB181D);}\
 .wc-cart__checkout:active{transform:scale(0.98);}\
+.wc-cart__checkout:disabled{opacity:0.6;cursor:default;pointer-events:none;}\
 .wc-cart__note{margin:10px 0 0;font-size:0.7rem;color:#948f7d;text-align:center;}\
 .wc-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);\
   background:var(--ink,#16140F);color:var(--paper,#fff);padding:12px 20px;border-radius:999px;\
@@ -312,11 +313,50 @@
     var checkoutBtn = document.getElementById('wcCheckoutBtn');
     if (checkoutBtn) {
       checkoutBtn.addEventListener('click', function () {
-        showToast("This is a demo store — checkout isn't connected yet.");
+        startCheckout(checkoutBtn);
       });
     }
 
     updateBadges(items);
+  }
+
+  var CHECKOUT_ENDPOINT = '/api/create-checkout-session';
+
+  function startCheckout(btn) {
+    var cartItems = readCart();
+    if (!cartItems.length) return;
+
+    var originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Redirecting…';
+
+    var payload = {
+      items: cartItems.map(function (item) {
+        return { id: item.id, size: item.size, qty: item.qty };
+      })
+    };
+
+    fetch(CHECKOUT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          if (!res.ok || !data || !data.url) {
+            throw new Error((data && data.error) || 'Could not start checkout.');
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        window.location.href = data.url;
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        showToast(err.message || "Checkout failed — please try again.");
+      });
   }
 
   function updateBadges(items) {
