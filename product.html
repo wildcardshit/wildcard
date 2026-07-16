@@ -154,6 +154,8 @@
   }
   .btn--primary{ background:var(--wild-red); color:var(--paper); }
   .btn--primary:hover{ background:var(--wild-red-dark); transform:translateY(-2px); }
+  .btn--primary:disabled{ background:rgba(22,20,15,0.25); cursor:not-allowed; }
+  .btn--primary:disabled:hover{ transform:none; background:rgba(22,20,15,0.25); }
   .btn--dark{ background:var(--ink); color:var(--paper); }
   .btn--dark:hover{ background:#000; transform:translateY(-2px); }
 
@@ -432,6 +434,14 @@
   }
   .size-btn:hover{ transform:translateY(-2px); border-color:var(--wild-red); }
   .size-btn.is-selected{ background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  .size-btn.is-soldout{
+    opacity:0.35;
+    color:rgba(22,20,15,0.5);
+    border-color:rgba(22,20,15,0.25);
+    text-decoration:line-through;
+    cursor:not-allowed;
+  }
+  .size-btn.is-soldout:hover{ transform:none; border-color:rgba(22,20,15,0.25); }
 
   .qty-row{
     display:inline-flex;
@@ -838,50 +848,30 @@
   </footer>
 
 <script src="js/cart.js"></script>
-<script>
-  const IMG_BLACK = "images/black-shirt.webp";
-  const IMG_RED = "images/red-shirt.webp";
-  const IMG_BLUE = "images/blue-shirt.webp";
-  const IMG_GREEN = "images/green-shirt.webp";
-  const IMG_YELLOW = "images/yellow-shirt.webp";
-
-  // Same colorway data as the "Pick a Card" section on home.html, plus a
-  // longer product description for this page. Keep the `id` values (lowercase
-  // color name) in sync with the links built in home.html.
-  const PRODUCTS = [
-    {
-      id: 'black', suit:'♠', label:'BLACK', hex:'#16140F', motto:"PLAY YOUR CARDS RIGHT",
-      img: IMG_BLACK, price: 44,
-      desc: "The OG colorway. A blacked-out raglan built for the player who never shows their hand. Heavyweight cotton, boxy unisex fit, and a graphic that only reveals itself up close."
-    },
-    {
-      id: 'red', suit:'♥', label:'RED', hex:'#D62828', motto:"FACE YOUR FEARS",
-      img: IMG_RED, price: 44,
-      desc: "For the fighters. A deep crimson raglan that wears its intensity right on the sleeve — built for the days you go to war with yourself and win."
-    },
-    {
-      id: 'blue', suit:'♦', label:'BLUE', hex:'#2456C7', motto:"IGNORE THE NOISE",
-      img: IMG_BLUE, price: 44,
-      desc: "Cool, composed, unbothered. The blue colorway is for anyone who's learned that the loudest voice in the room usually isn't worth listening to."
-    },
-    {
-      id: 'green', suit:'♣', label:'GREEN', hex:'#2F6F4E', motto:"GROW THROUGH WHAT YOU GO THROUGH",
-      img: IMG_GREEN, price: 44,
-      desc: "Growth isn't pretty. This raglan is for the ones putting in the quiet work nobody claps for yet."
-    },
-    {
-      id: 'yellow', suit:'★', label:'YELLOW', hex:'#E8B92F', motto:"TRUST THE PROCESS",
-      img: IMG_YELLOW, price: 44,
-      desc: "Trust takes time. Wear the yellow while you're becoming who you're becoming."
-    },
-  ];
+<script type="module">
+  // Single source of truth for every product on the site — see
+  // js/products.js. This page never defines its own product data; it only
+  // renders whatever it gets back from the shared catalog.
+  import {
+    SIZE_ORDER, getVisibleProducts, getProduct,
+    isSizeInStock, isPurchasable, isLaunched
+  } from './js/products.js';
 
   function getParam(name){
     return new URLSearchParams(window.location.search).get(name);
   }
 
   const requestedId = getParam('id');
-  const product = PRODUCTS.find(p => p.id === requestedId) || PRODUCTS[0];
+  const requested = requestedId ? getProduct(requestedId) : null;
+
+  // Unknown id, or a product that's been marked hidden: send the visitor
+  // back to the homepage rather than showing/selling something that isn't
+  // meant to be reachable.
+  if (!requested || requested.hidden) {
+    window.location.replace('home.html');
+    throw new Error('Product unavailable — redirecting home.');
+  }
+  const product = requested;
 
   // ---------- Populate product details ----------
   document.title = `WILDCARD | ${product.label} Raglan`;
@@ -901,16 +891,40 @@
   document.getElementById('crumbName').textContent = product.motto;
 
   // ---------- Size selector ----------
+  // Buttons are generated from product.sizes so an out-of-stock size (e.g.
+  // { M: false }) automatically renders disabled/struck-through here and
+  // can never be selected or added to the cart.
   let selectedSize = null;
   const sizeWarning = document.getElementById('sizeWarning');
-  document.querySelectorAll('.size-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('is-selected'));
-      btn.classList.add('is-selected');
-      selectedSize = btn.dataset.size;
-      sizeWarning.style.display = 'none';
-    });
+  const sizeRow = document.getElementById('sizeRow');
+  sizeRow.innerHTML = '';
+  SIZE_ORDER.forEach(size => {
+    const inStock = isSizeInStock(product, size);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'size-btn' + (inStock ? '' : ' is-soldout');
+    btn.dataset.size = size;
+    btn.textContent = size;
+    if (!inStock) {
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.title = isLaunched(product) ? `${size} is out of stock` : 'Coming soon';
+    } else {
+      btn.addEventListener('click', () => {
+        sizeRow.querySelectorAll('.size-btn').forEach(b => b.classList.remove('is-selected'));
+        btn.classList.add('is-selected');
+        selectedSize = size;
+        sizeWarning.style.display = 'none';
+      });
+    }
+    sizeRow.appendChild(btn);
   });
+
+  // A fully sold-out product (every size unavailable), OR a product whose
+  // drop hasn't launched yet, disables Add to Cart entirely rather than
+  // letting someone select nothing and get stuck.
+  const productAvailable = isPurchasable(product);
+  const productLaunched = isLaunched(product);
 
   // ---------- Quantity selector ----------
   let qty = 1;
@@ -928,7 +942,18 @@
   // Cart badge (#cartCount) is kept in sync automatically by js/cart.js.
 
   const addToCartBtn = document.getElementById('addToCartBtn');
+  if (!productLaunched) {
+    // Pre-launch: purchasing is switched off site-wide for this product.
+    // A native `disabled` button can't receive click events at all, so
+    // this is not just visually inert — it's genuinely not clickable.
+    addToCartBtn.disabled = true;
+    addToCartBtn.textContent = 'Coming Soon';
+  } else if (!productAvailable) {
+    addToCartBtn.disabled = true;
+    addToCartBtn.textContent = 'Sold Out';
+  }
   addToCartBtn.addEventListener('click', () => {
+    if (!productAvailable) return;
     if (!selectedSize){
       sizeWarning.style.display = 'block';
       return;
@@ -955,7 +980,7 @@
 
   // ---------- Other colorways ----------
   const swatchRow = document.getElementById('swatchRow');
-  PRODUCTS.forEach(p => {
+  getVisibleProducts().forEach(p => {
     const swatch = document.createElement('div');
     swatch.className = 'swatch' + (p.id === product.id ? ' is-current' : '');
     swatch.innerHTML = `
@@ -1023,7 +1048,7 @@
         "url": pageUrl,
         "priceCurrency": "USD",
         "price": price,
-        "availability": "https://schema.org/InStock",
+        "availability": productAvailable ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
         "seller": { "@type": "Organization", "name": "WILDCARD" }
       }
     };

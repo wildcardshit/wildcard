@@ -2,31 +2,39 @@
  * POST /api/create-checkout-session
  *
  * Cloudflare Pages Function. Accepts the cart from the frontend, re-prices
- * every line item against the server-side catalog below (the client's price
+ * every line item against the shared product catalog (the client's price
  * is never trusted), creates a Stripe Checkout Session, and returns only
  * the Session URL as JSON.
  *
  * Scope, on purpose:
  *   - No redirect happens here — the frontend is responsible for sending
  *     the customer to the returned URL.
- *   - No webhooks, no order persistence, no inventory changes, no admin UI.
+ *   - No webhooks, no order persistence, no admin UI.
  *   - No existing frontend files are touched by this function.
  *
  * Required Cloudflare Pages environment variable:
  *   STRIPE_SECRET_KEY  — your Stripe secret key (sk_live_... / sk_test_...)
  */
 
-// ---------- Server-side catalog (source of truth for price + product info) ----------
-// Mirrors the PRODUCTS array in product.html. Keep in sync manually if that
-// file changes — this catalog is what actually determines what the customer
-// is charged, never the numbers sent from the browser.
-const CATALOG = {
-  black:  { label: 'BLACK',  motto: 'PLAY YOUR CARDS RIGHT',            priceCents: 4400, img: 'images/black-shirt.webp' },
-  red:    { label: 'RED',    motto: 'FACE YOUR FEARS',                  priceCents: 4400, img: 'images/red-shirt.webp' },
-  blue:   { label: 'BLUE',   motto: 'IGNORE THE NOISE',                 priceCents: 4400, img: 'images/blue-shirt.webp' },
-  green:  { label: 'GREEN',  motto: 'GROW THROUGH WHAT YOU GO THROUGH', priceCents: 4400, img: 'images/green-shirt.webp' },
-  yellow: { label: 'YELLOW', motto: 'TRUST THE PROCESS',                priceCents: 4400, img: 'images/yellow-shirt.webp' }
-};
+import { PRODUCTS, isSizeInStock, isLaunched, toPriceCents } from '../../js/products.js';
+
+// ---------- Server-side catalog (built from the shared PRODUCTS array) ----------
+// This is the ONLY place price/product info comes from — it's the exact
+// same data the frontend renders, imported directly rather than copied, so
+// this catalog can never drift out of sync with what the customer sees.
+// Hidden products and products whose drop hasn't launched yet are
+// intentionally left out here: neither can be bought, no matter what a
+// request from the browser claims.
+const CATALOG = PRODUCTS.filter((p) => !p.hidden && isLaunched(p)).reduce((map, p) => {
+  map[p.id] = {
+    label: p.label,
+    motto: p.motto,
+    priceCents: toPriceCents(p),
+    img: p.img,
+    product: p, // kept for per-size stock checks in validateCart()
+  };
+  return map;
+}, {});
 
 const VALID_SIZES = new Set(['S', 'M', 'L', 'XL']);
 const MAX_QTY_PER_LINE = 20;
@@ -67,6 +75,9 @@ function validateCart(items) {
     const size = raw.size != null ? String(raw.size).toUpperCase().trim() : null;
     if (!size || !VALID_SIZES.has(size)) {
       throw new Error(`Invalid size for "${id}".`);
+    }
+    if (!isSizeInStock(catalogEntry.product, size)) {
+      throw new Error(`"${id}" is out of stock in size ${size}.`);
     }
 
     const qty = Number.parseInt(raw.qty, 10);

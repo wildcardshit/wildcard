@@ -2054,22 +2054,16 @@
   </footer>
 
 <script src="js/cart.js"></script>
-<script>
-const IMG_BLACK = "images/black-shirt.webp";
-const IMG_RED = "images/red-shirt.webp";
-const IMG_BLUE = "images/blue-shirt.webp";
-const IMG_GREEN = "images/green-shirt.webp";
-const IMG_YELLOW = "images/yellow-shirt.webp";
+<script type="module">
+  // Single source of truth for every product on the site — see
+  // js/products.js. Nothing about a product (name, price, image, copy)
+  // is ever hardcoded here; it all comes from that shared catalog.
+  import { getVisibleProducts } from './js/products.js';
 
-  const DECK = [
-    { suit:'♠', label:'BLACK',  hex:'#16140F', motto:"PLAY YOUR CARDS RIGHT", sub:null, img: IMG_BLACK, blurb:"Two hands, five cards, zero bluffing. Just play it right." },
-    { suit:'♥', label:'RED',    hex:'#D62828', motto:"FACE YOUR FEARS", sub:"WE'RE ALL FIGHTING DEMONS", img: IMG_RED, blurb:"We're all fighting something. Might as well wear it loud." },
-    { suit:'♦', label:'BLUE',   hex:'#2456C7', motto:"IGNORE THE NOISE", sub:null, img: IMG_BLUE, blurb:"Block out everyone who was never worth the volume." },
-    { suit:'♣', label:'GREEN',  hex:'#2F6F4E', motto:"GROW THROUGH WHAT YOU GO THROUGH", sub:null, img: IMG_GREEN, blurb:"Luck doesn't grow on trees. It grows through everything else." },
-    { suit:'★', label:'YELLOW', hex:'#E8B92F', motto:"TRUST THE PROCESS", sub:"CHANGE IS HAPPENING EVEN WHEN YOU CAN'T SEE IT", img: IMG_YELLOW, blurb:"Every monarch was a mess first. Trust it." },
-  ];
+  // Build the interactive "Pick a Card" hand from real Phase 1 product photos.
+  // Hidden products (product.hidden === true) are automatically excluded.
+  const DECK = getVisibleProducts();
 
-  // Build the interactive "Pick a Card" hand from real Phase 1 product photos
   const pickHand = document.getElementById('pickHand');
   const pickCenter = (DECK.length - 1) / 2;
 
@@ -2094,16 +2088,15 @@ const IMG_YELLOW = "images/yellow-shirt.webp";
     // Set once at build time (not per animation frame) so the mobile fan's
     // active-card glow can be pure CSS — see .pick__card.is-active.
     card.style.setProperty('--accent-rgb', hexToRgbTriple(item.hex));
-    const productId = item.label.toLowerCase();
     card.innerHTML = `
       <span class="pick__index" style="color:${item.hex}">${item.suit}</span>
-      <a class="pick__link" href="product.html?id=${productId}" aria-label="View ${item.label} colorway">
+      <a class="pick__link" href="product.html?id=${item.id}" aria-label="View ${item.label} colorway">
         <div class="pick__photo"><img src="${item.img}" alt="${item.label} colorway raglan" loading="lazy" decoding="async"></div>
         <h3 class="pick__name">${item.motto}</h3>
       </a>
       <p class="pick__blurb">${item.blurb}</p>
       <div class="pick__row">
-        <span class="pick__price">$44</span>
+        <span class="pick__price">$${item.price}</span>
       </div>
     `;
     pickHand.appendChild(card);
