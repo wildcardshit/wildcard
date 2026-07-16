@@ -797,8 +797,8 @@
         <p class="product__prelaunch-note" id="prelaunchNote" style="display:none;">The first hand will be dealt soon. Until then, enjoy the experience.</p>
         <p class="product__note" id="sizeWarning" style="display:none;">Please select a size.</p>
 
-        <div class="product__meta">
-          <p>Premium heavyweight cotton raglan &middot; Boxy unisex fit &middot; Ships in 3&ndash;5 business days</p>
+        <div class="product__meta" id="productMeta" style="display:none;">
+          <p id="productMetaText"></p>
         </div>
       </div>
     </section>
@@ -953,6 +953,8 @@
 
   const addToCartBtn = document.getElementById('addToCartBtn');
   const prelaunchNote = document.getElementById('prelaunchNote');
+  const productMeta = document.getElementById('productMeta');
+  const productMetaText = document.getElementById('productMetaText');
   if (!productLaunched) {
     // Pre-launch: purchasing is switched off site-wide for this product.
     // A native `disabled` button can't receive click events at all, so
@@ -960,7 +962,13 @@
     addToCartBtn.disabled = true;
     addToCartBtn.textContent = 'Phase One Is Being Shuffled';
     prelaunchNote.style.display = 'block';
-  } else if (!productAvailable) {
+    productMeta.style.display = 'none';
+  } else {
+    prelaunchNote.style.display = 'none';
+    productMetaText.textContent = 'Each piece represents a different mindset. Every card tells a story. Which one will you play?';
+    productMeta.style.display = 'block';
+  }
+  if (!productAvailable && productLaunched) {
     addToCartBtn.disabled = true;
     addToCartBtn.textContent = 'Sold Out';
   }
