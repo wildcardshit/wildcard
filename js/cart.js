@@ -14,11 +14,33 @@
   var listeners = [];
 
   // ---------- state ----------
+  // Legacy carts persisted to localStorage before the shirt images were
+  // converted from .png to .webp can still hold the old filenames. Heal
+  // those on read so old, already-stored cart lines keep working.
+  var LEGACY_IMG_MAP = {
+    'images/black-shirt.png': 'images/black-shirt.webp',
+    'images/red-shirt.png': 'images/red-shirt.webp',
+    'images/blue-shirt.png': 'images/blue-shirt.webp',
+    'images/green-shirt.png': 'images/green-shirt.webp',
+    'images/yellow-shirt.png': 'images/yellow-shirt.webp'
+  };
+
   function readCart() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       var parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      if (!Array.isArray(parsed)) return [];
+      var healed = false;
+      parsed.forEach(function (item) {
+        if (item && LEGACY_IMG_MAP.hasOwnProperty(item.img)) {
+          item.img = LEGACY_IMG_MAP[item.img];
+          healed = true;
+        }
+      });
+      if (healed) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed)); } catch (err) {}
+      }
+      return parsed;
     } catch (err) {
       return [];
     }
