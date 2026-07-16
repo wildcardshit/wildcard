@@ -21,11 +21,11 @@
 // file changes — this catalog is what actually determines what the customer
 // is charged, never the numbers sent from the browser.
 const CATALOG = {
-  black:  { label: 'BLACK',  motto: 'PLAY YOUR CARDS RIGHT',            priceCents: 4400, img: 'images/black-shirt.png' },
-  red:    { label: 'RED',    motto: 'FACE YOUR FEARS',                  priceCents: 4400, img: 'images/red-shirt.png' },
-  blue:   { label: 'BLUE',   motto: 'IGNORE THE NOISE',                 priceCents: 4400, img: 'images/blue-shirt.png' },
-  green:  { label: 'GREEN',  motto: 'GROW THROUGH WHAT YOU GO THROUGH', priceCents: 4400, img: 'images/green-shirt.png' },
-  yellow: { label: 'YELLOW', motto: 'TRUST THE PROCESS',                priceCents: 4400, img: 'images/yellow-shirt.png' }
+  black:  { label: 'BLACK',  motto: 'PLAY YOUR CARDS RIGHT',            priceCents: 4400, img: 'images/black-shirt.webp' },
+  red:    { label: 'RED',    motto: 'FACE YOUR FEARS',                  priceCents: 4400, img: 'images/red-shirt.webp' },
+  blue:   { label: 'BLUE',   motto: 'IGNORE THE NOISE',                 priceCents: 4400, img: 'images/blue-shirt.webp' },
+  green:  { label: 'GREEN',  motto: 'GROW THROUGH WHAT YOU GO THROUGH', priceCents: 4400, img: 'images/green-shirt.webp' },
+  yellow: { label: 'YELLOW', motto: 'TRUST THE PROCESS',                priceCents: 4400, img: 'images/yellow-shirt.webp' }
 };
 
 const VALID_SIZES = new Set(['S', 'M', 'L', 'XL']);
