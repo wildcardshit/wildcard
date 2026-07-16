@@ -56,7 +56,7 @@
   }
 
   *{box-sizing:border-box;}
-  html{scroll-behavior:smooth;}
+  html{scroll-behavior:smooth; touch-action:manipulation;}
   body{
     margin:0;
     background:var(--paper);
@@ -151,6 +151,7 @@
     text-transform:uppercase;
     border-radius:4px;
     transition:transform .15s ease, background .15s ease, color .15s ease;
+    touch-action:manipulation;
   }
   .btn--primary{ background:var(--wild-red); color:var(--paper); }
   .btn--primary:hover{ background:var(--wild-red-dark); transform:translateY(-2px); }
@@ -482,6 +483,14 @@
     color:var(--wild-red);
     margin:0 0 20px;
   }
+  .product__prelaunch-note{
+    font-family:var(--font-mono);
+    font-size:0.75rem;
+    color:#6b6558;
+    text-align:center;
+    margin:0 0 20px;
+    touch-action:manipulation;
+  }
   .product__meta{
     padding-top:20px;
     border-top:2px dashed #ddd8cc;
@@ -785,6 +794,7 @@
         </div>
 
         <button class="btn btn--primary product__cta" id="addToCartBtn" type="button">Add to Cart</button>
+        <p class="product__prelaunch-note" id="prelaunchNote" style="display:none;">The first hand will be dealt soon.</p>
         <p class="product__note" id="sizeWarning" style="display:none;">Please select a size.</p>
 
         <div class="product__meta">
@@ -942,12 +952,14 @@
   // Cart badge (#cartCount) is kept in sync automatically by js/cart.js.
 
   const addToCartBtn = document.getElementById('addToCartBtn');
+  const prelaunchNote = document.getElementById('prelaunchNote');
   if (!productLaunched) {
     // Pre-launch: purchasing is switched off site-wide for this product.
     // A native `disabled` button can't receive click events at all, so
     // this is not just visually inert — it's genuinely not clickable.
     addToCartBtn.disabled = true;
-    addToCartBtn.textContent = 'Coming Soon';
+    addToCartBtn.textContent = 'Phase One is Still Being Shuffled';
+    prelaunchNote.style.display = 'block';
   } else if (!productAvailable) {
     addToCartBtn.disabled = true;
     addToCartBtn.textContent = 'Sold Out';
