@@ -794,7 +794,7 @@
         </div>
 
         <button class="btn btn--primary product__cta" id="addToCartBtn" type="button">Add to Cart</button>
-        <p class="product__prelaunch-note" id="prelaunchNote" style="display:none;">The first hand will be dealt soon.</p>
+        <p class="product__prelaunch-note" id="prelaunchNote" style="display:none;">The first hand will be dealt soon. Until then, enjoy the experience.</p>
         <p class="product__note" id="sizeWarning" style="display:none;">Please select a size.</p>
 
         <div class="product__meta">
@@ -958,7 +958,7 @@
     // A native `disabled` button can't receive click events at all, so
     // this is not just visually inert — it's genuinely not clickable.
     addToCartBtn.disabled = true;
-    addToCartBtn.textContent = 'Phase One is Still Being Shuffled';
+    addToCartBtn.textContent = 'Phase One Is Being Shuffled';
     prelaunchNote.style.display = 'block';
   } else if (!productAvailable) {
     addToCartBtn.disabled = true;
