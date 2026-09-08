@@ -2466,9 +2466,9 @@
     // deck was flicked, so a slow swipe glides gently into place while a
     // fast flick snaps across the screen and settles with a bit of overshoot.
     const SPRING_RESPONSE_SLOW = 0.85;  // seconds to feel "arrived" — gentle drag/tap
-    const SPRING_RESPONSE_FAST = 0.5;   // seconds to feel "arrived" — hard flick
+    const SPRING_RESPONSE_FAST = 0.95;  // seconds to feel "arrived" — hard flick (slowed down for a smoother slide)
     const SPRING_DAMPING_SLOW = 0.97;   // 1.0 = no overshoot
-    const SPRING_DAMPING_FAST = 0.82;   // more overshoot/bounce on energetic flicks
+    const SPRING_DAMPING_FAST = 0.96;   // reduced overshoot/bounce so flicks glide smoothly instead of snapping
     const MAX_STEP = 1 / 30; // clamp dt so a stalled tab can't cause a jump
 
     function springTo(target, initialVelocity, energy){
