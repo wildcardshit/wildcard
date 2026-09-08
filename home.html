@@ -56,7 +56,7 @@
   }
 
   *{box-sizing:border-box;}
-  html{scroll-behavior:smooth; touch-action:manipulation;}
+  html{scroll-behavior:smooth; touch-action:pan-y;}
   body{
     margin:0;
     background:var(--paper);
@@ -2056,6 +2056,29 @@
 
 <script src="js/cart.js"></script>
 <script src="js/mailto-fallback.js"></script>
+<script>
+  // Belt-and-suspenders zoom lock. touch-action:pan-y (set globally in CSS)
+  // already stops standard pinch-zoom and double-tap-zoom on modern
+  // browsers, but older/Safari builds expose pinch-zoom through the
+  // non-standard gesture* events regardless of touch-action, and a
+  // trackpad's ctrl+wheel gesture bypasses touch-action entirely. Blocking
+  // all three keeps the page truly locked at its original scale everywhere.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function(evt){
+    document.addEventListener(evt, function(e){ e.preventDefault(); }, { passive: false });
+  });
+  document.addEventListener('wheel', function(e){
+    if (e.ctrlKey) e.preventDefault();
+  }, { passive: false });
+  // Second line of defense against double-tap-to-zoom: if two touchend
+  // events land within 300ms of each other, treat it as a double-tap and
+  // swallow it before the browser's native zoom gesture can fire.
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', function(e){
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+</script>
 <script type="module">
   // Single source of truth for every product on the site — see
   // js/products.js. Nothing about a product (name, price, image, copy)
@@ -2564,7 +2587,17 @@
       // can be handed straight to the time-based spring below.
       const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
-      const target = Math.round(projected);
+      // Whatever card the finger actually dragged the deck to — this is what
+      // lets a slow, deliberate drag land on any card in the deck, however
+      // many it passed along the way.
+      const nearest = Math.round(position);
+      // A fast flick should still only ever advance the deck by a single
+      // card beyond wherever it was actually dragged to. Without this clamp,
+      // a hard flick's velocity gets projected forward by a fixed time
+      // window (140ms) and can land 2-3 cards further out than intended,
+      // which reads as the deck "skipping" cards instead of gliding smoothly
+      // to the next one.
+      const target = clamp(Math.round(projected), nearest - 1, nearest + 1);
       // Sharpen the curve (rather than a flat linear map) so a genuine
       // flick disproportionately out-bursts a lazy drag — small releases
       // barely ripple the deck, hard flicks make it explode.
