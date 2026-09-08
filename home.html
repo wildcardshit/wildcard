@@ -2442,10 +2442,10 @@
     // slow, controlled pair and a fast, springier pair based on how hard the
     // deck was flicked, so a slow swipe glides gently into place while a
     // fast flick snaps across the screen and settles with a bit of overshoot.
-    const SPRING_RESPONSE_SLOW = 1.0;   // seconds to feel "arrived" — gentle drag/tap
-    const SPRING_RESPONSE_FAST = 0.55;  // seconds to feel "arrived" — hard flick
-    const SPRING_DAMPING_SLOW = 1.0;    // 1.0 = no overshoot
-    const SPRING_DAMPING_FAST = 0.95;   // more overshoot/bounce on energetic flicks
+    const SPRING_RESPONSE_SLOW = 0.46;  // seconds to feel "arrived" — gentle drag/tap
+    const SPRING_RESPONSE_FAST = 0.22;  // seconds to feel "arrived" — hard flick
+    const SPRING_DAMPING_SLOW = 0.92;   // 1.0 = no overshoot
+    const SPRING_DAMPING_FAST = 0.66;   // more overshoot/bounce on energetic flicks
     const MAX_STEP = 1 / 30; // clamp dt so a stalled tab can't cause a jump
 
     function springTo(target, initialVelocity, energy){
@@ -2564,8 +2564,7 @@
       // can be handed straight to the time-based spring below.
       const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
-      const baseIndex = Math.round(startPosition);
-      const target = clamp(Math.round(projected), baseIndex - 1, baseIndex + 1);
+      const target = Math.round(projected);
       // Sharpen the curve (rather than a flat linear map) so a genuine
       // flick disproportionately out-bursts a lazy drag — small releases
       // barely ripple the deck, hard flicks make it explode.
