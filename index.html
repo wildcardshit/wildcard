@@ -6997,7 +6997,7 @@
   // the camera first curves toward the center monitor exactly like the
   // desktop version does — banking around to line up square with the
   // screen as it closes in, so it genuinely reads as diving toward the
-  // monitor — holds there for half a second, then arcs up and over off
+  // monitor — then, with no hold in between, arcs straight up and over off
   // the monitor and down onto the phone sitting on the desk, and finally
   // dives on into the phone's screen until it fills the entire frame.
   // Unlike the desktop dive, there's no white flash covering the cut: the
@@ -7044,8 +7044,15 @@
   // total length, so the external flash/navigation timers (set up in
   // startEnterSequence) stay perfectly in sync with what the camera is
   // actually doing.
-  const MOBILE_DIVE_TO_MONITOR_DURATION = 0.75;  // camera heads toward the center monitor, like the desktop dive
-  const MOBILE_MONITOR_PAUSE_DURATION   = 0.35;  // holds on the monitor for an unhurried beat
+  // Runs the exact same duration + easing formula as desktop's dive (see
+  // updateEnterFlightCamera) up through this point — MOBILE_DIVE_TO_MONITOR_DURATION
+  // is simply the moment that shared curve reaches MOBILE_MONITOR_APPROACH_FRACTION
+  // of the way there. Camera position/orientation for t in
+  // [0, MOBILE_DIVE_TO_MONITOR_DURATION] is therefore pixel-identical to what
+  // desktop's dive would show at the same elapsed time; only what happens
+  // after this point (peeling off toward the phone) differs.
+  const MOBILE_DIVE_TO_MONITOR_DURATION = (FLIGHT_DURATION - LAUNCH_DELAY) * Math.cbrt(MOBILE_MONITOR_APPROACH_FRACTION);
+  const MOBILE_MONITOR_PAUSE_DURATION   = 0;  // no hold/bob at the monitor — glide straight on into the phone
   const MOBILE_PAN_TO_PHONE_DURATION    = 0.8; // camera pans/tilts down off the monitor and settles above the phone
   const MOBILE_PHONE_HOVER_PAUSE_DURATION = 0.25; // holds directly above the phone, orientation already settled, before diving in
   const MOBILE_DIVE_INTO_PHONE_DURATION = 0.55;  // smooth final dive that carries on through the phone's screen until it fills the frame
@@ -7091,6 +7098,7 @@
 
   function beginCameraFlight(){
     flightElapsed = 0;
+
     flightStartPos.copy(camera.position);
     flightStartFov = camera.fov;
     camera.up.set(0, 1, 0);
@@ -7253,7 +7261,15 @@
   function updateEnterFlightCamera(dt){
     flightElapsed += dt;
     if(flightElapsed < LAUNCH_DELAY){
-      return 0; // the tiny held beat before the whoosh — camera doesn't move yet
+      // The tiny held beat before the whoosh — position doesn't move yet,
+      // but turn to face the blast/monitor right away so the coffee table
+      // and card burst are in frame for the whole pause. Without this,
+      // whichever way the camera happened to be idling when Enter was
+      // pressed (couch/TV-angled on mobile, roughly monitor-angled by
+      // default on desktop) is what the pause shows, which is why the
+      // burst read as missing on mobile specifically.
+      camera.lookAt(centerMonitorWorldPos);
+      return 0;
     }
     const activeElapsed = flightElapsed - LAUNCH_DELAY;
 
@@ -7281,22 +7297,28 @@
   // previous one left off, so the whole thing reads as one unbroken
   // cinematic move rather than separate camera moves cut together.
   function updateMobileEnterFlightCamera(activeElapsed){
-    // Leg 1: glide toward the monitor with a full ease-in/ease-out curve —
-    // zero velocity at the start and, crucially, zero velocity right as it
-    // arrives, so it settles into the pause naturally instead of slamming
-    // to a stop.
+    // Leg 1: identical to desktop's dive toward the monitor — same duration
+    // basis, same easing curve, same quadBezier target — so camera
+    // position/orientation here is pixel-identical to what desktop shows at
+    // the same elapsed time. It simply stops (see MOBILE_DIVE_TO_MONITOR_DURATION,
+    // above) at the moment that shared curve reaches
+    // MOBILE_MONITOR_APPROACH_FRACTION of the way to the monitor, rather
+    // than continuing on to a full arrival — that's the one and only place
+    // the mobile and desktop flights diverge.
     if(activeElapsed < MOBILE_DIVE_TO_MONITOR_DURATION){
-      const e = smootherstep01(activeElapsed / MOBILE_DIVE_TO_MONITOR_DURATION);
-      quadBezier(flightStartPos, flightControlPos, flightTargetPos, e * MOBILE_MONITOR_APPROACH_FRACTION, camera.position);
+      const p = activeElapsed / (FLIGHT_DURATION - LAUNCH_DELAY);
+      const e = easeLaunch(p);
+      quadBezier(flightStartPos, flightControlPos, flightTargetPos, e, camera.position);
       camera.lookAt(centerMonitorWorldPos);
       updateEnterLensEffect(0);
       updateMonitorBrighten(e);
       return 0;
     }
 
-    // Leg 2: hold on the monitor for half a second, with the faintest
-    // vertical drift (zero at both boundaries of the pause) so it reads as
-    // a living, held shot rather than a paused video.
+    // Leg 2: no hold on the monitor — MOBILE_MONITOR_PAUSE_DURATION is 0,
+    // so this block is skipped every frame and the camera flows straight
+    // from arriving at the monitor into leg 3's pan toward the phone,
+    // instead of pausing/bobbing there first.
     const pauseElapsed = activeElapsed - MOBILE_DIVE_TO_MONITOR_DURATION;
     if(pauseElapsed < MOBILE_MONITOR_PAUSE_DURATION){
       const u = pauseElapsed / MOBILE_MONITOR_PAUSE_DURATION;
