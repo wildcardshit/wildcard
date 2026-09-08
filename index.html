@@ -7261,7 +7261,15 @@
   function updateEnterFlightCamera(dt){
     flightElapsed += dt;
     if(flightElapsed < LAUNCH_DELAY){
-      return 0; // the tiny held beat before the whoosh — camera doesn't move yet
+      // The tiny held beat before the whoosh — position doesn't move yet,
+      // but turn to face the blast/monitor right away so the coffee table
+      // and card burst are in frame for the whole pause. Without this,
+      // whichever way the camera happened to be idling when Enter was
+      // pressed (couch/TV-angled on mobile, roughly monitor-angled by
+      // default on desktop) is what the pause shows, which is why the
+      // burst read as missing on mobile specifically.
+      camera.lookAt(centerMonitorWorldPos);
+      return 0;
     }
     const activeElapsed = flightElapsed - LAUNCH_DELAY;
 
