@@ -2564,7 +2564,8 @@
       // can be handed straight to the time-based spring below.
       const indexPerSecond = (velocity * 1000) / cardStep;
       const projected = position - (velocity * 140) / cardStep;
-      const target = Math.round(projected);
+      const baseIndex = Math.round(startPosition);
+      const target = clamp(Math.round(projected), baseIndex - 1, baseIndex + 1);
       // Sharpen the curve (rather than a flat linear map) so a genuine
       // flick disproportionately out-bursts a lazy drag — small releases
       // barely ripple the deck, hard flicks make it explode.
