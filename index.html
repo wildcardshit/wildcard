@@ -298,6 +298,88 @@
     stroke-width: 0.3;
   }
 
+  /* Christmas toggle — mirrors #halloweenToggleBtn's glassy circular style
+     and sits in the same slot (the two themes are mutually exclusive, so
+     only one of the pair is ever shown at a time — see the dedicated
+     scripts near the end of the file). For now this button only shows or
+     hides itself based on window.currentTheme and toggles its own
+     "active" look on click; no LEDs, snow, or other effects are wired up
+     to it yet. */
+  #christmasToggleBtn{
+    position: fixed;
+    top: 78px; right: 28px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 45%),
+      linear-gradient(160deg, rgba(255,90,90,0.14) 0%, rgba(255,90,90,0.04) 55%, rgba(40,140,70,0.08) 100%);
+    color: #ff8f8f;
+    border: 1px solid rgba(255,120,120,0.32);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+      0 2px 10px rgba(0,0,0,0.25),
+      0 0 14px rgba(255,80,80,0.25),
+      inset 0 1px 1px rgba(255,255,255,0.3),
+      inset 0 -6px 10px rgba(0,0,0,0.12);
+    backdrop-filter: blur(3px) saturate(1.15);
+    z-index: 20;
+    pointer-events: auto;
+    transition: filter 0.15s ease-out, transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s ease-out;
+  }
+  #christmasToggleBtn:hover{
+    filter: brightness(1.25);
+    transform: scale(1.08);
+    box-shadow:
+      0 3px 14px rgba(0,0,0,0.28),
+      0 0 22px rgba(255,80,80,0.4),
+      inset 0 1px 1px rgba(255,255,255,0.35),
+      inset 0 -6px 10px rgba(0,0,0,0.12);
+  }
+  #christmasToggleBtn.active{
+    filter: brightness(1.1);
+    box-shadow:
+      0 2px 10px rgba(0,0,0,0.25),
+      0 0 20px rgba(255,80,80,0.45),
+      inset 0 1px 1px rgba(255,255,255,0.35),
+      inset 0 -6px 10px rgba(0,0,0,0.12);
+  }
+  #christmasToggleBtn svg{
+    overflow: visible;
+    filter: drop-shadow(0 0 4px rgba(255,90,90,0.35));
+  }
+  #christmasToggleBtn .xm-box{
+    fill: url(#presentBoxGradient);
+    stroke: rgba(110,20,30,0.5);
+    stroke-width: 0.5;
+    stroke-linejoin: round;
+  }
+  #christmasToggleBtn .xm-lid{
+    fill: url(#presentLidGradient);
+    stroke: rgba(110,20,30,0.5);
+    stroke-width: 0.5;
+    stroke-linejoin: round;
+  }
+  #christmasToggleBtn .xm-ribbon-v{
+    fill: url(#presentRibbonGradient);
+  }
+  #christmasToggleBtn .xm-bow{
+    fill: url(#presentRibbonGradient);
+    stroke: rgba(20,60,20,0.4);
+    stroke-width: 0.4;
+    stroke-linejoin: round;
+  }
+  #christmasToggleBtn .xm-knot{
+    fill: #ffd54f;
+  }
+  #christmasToggleBtn .xm-sheen{
+    fill: rgba(255,255,255,0.4);
+  }
+
   /* Mute toggle — mirrors #themeToggleBtn's glassy circular style exactly,
      mirrored to the top-left corner. Purely a self-contained icon toggle
      that flips the muted property on #bgMusic. */
@@ -540,17 +622,20 @@
   .perf-mobile #instagramBtn,
   .perf-mobile #themeToggleBtn,
   .perf-mobile #halloweenToggleBtn,
+  .perf-mobile #christmasToggleBtn,
   .perf-mobile #muteToggleBtn,
   .perf-mobile #enterBtn{
     backdrop-filter: none;
   }
 
-  /* Slightly smaller sun/moon and pumpkin icons on phones, now that
-     they're bare icons (no button circle) sitting right over the scene —
-     a touch less screen real estate without shrinking the tap target. */
+  /* Slightly smaller sun/moon, pumpkin, and present icons on phones, now
+     that they're bare icons (no button circle) sitting right over the
+     scene — a touch less screen real estate without shrinking the tap
+     target. */
   @media (max-width: 600px){
     #themeToggleBtn svg,
-    #halloweenToggleBtn svg{
+    #halloweenToggleBtn svg,
+    #christmasToggleBtn svg{
       width: 30px;
       height: 30px;
     }
@@ -659,6 +744,35 @@
   </svg>
 </button>
 
+<button id="christmasToggleBtn" type="button" aria-label="Toggle Christmas view">
+  <svg viewBox="0 0 24 24" width="34" height="34">
+    <defs>
+      <linearGradient id="presentBoxGradient" x1="20%" y1="0%" x2="80%" y2="100%">
+        <stop offset="0%" stop-color="#ff7a7a"></stop>
+        <stop offset="55%" stop-color="#e63946"></stop>
+        <stop offset="100%" stop-color="#9c1c2b"></stop>
+      </linearGradient>
+      <linearGradient id="presentLidGradient" x1="20%" y1="0%" x2="80%" y2="100%">
+        <stop offset="0%" stop-color="#ff8f8f"></stop>
+        <stop offset="60%" stop-color="#ef4553"></stop>
+        <stop offset="100%" stop-color="#af2233"></stop>
+      </linearGradient>
+      <linearGradient id="presentRibbonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#8de08a"></stop>
+        <stop offset="55%" stop-color="#4caf50"></stop>
+        <stop offset="100%" stop-color="#2e7d32"></stop>
+      </linearGradient>
+    </defs>
+    <path class="xm-lid" d="M3.4 7.6C3.4 7 3.9 6.5 4.5 6.5H19.5C20.1 6.5 20.6 7 20.6 7.6V9.6C20.6 10.2 20.1 10.6 19.5 10.6H4.5C3.9 10.6 3.4 10.2 3.4 9.6Z"></path>
+    <path class="xm-box" d="M4.6 10.6H19.4V18.6C19.4 19.7 18.5 20.6 17.4 20.6H6.6C5.5 20.6 4.6 19.7 4.6 18.6Z"></path>
+    <rect class="xm-ribbon-v" x="10.9" y="6.5" width="2.2" height="14.1"></rect>
+    <path class="xm-bow" d="M12 6.5C11.6 5 10 4.2 8.7 4.9C7.6 5.5 7.6 7 8.8 7.4C9.7 7.7 10.8 7.2 12 6.5Z"></path>
+    <path class="xm-bow" d="M12 6.5C12.4 5 14 4.2 15.3 4.9C16.4 5.5 16.4 7 15.2 7.4C14.3 7.7 13.2 7.2 12 6.5Z"></path>
+    <circle class="xm-knot" cx="12" cy="6.4" r="0.9"></circle>
+    <ellipse class="xm-sheen" cx="7.6" cy="13.2" rx="1.6" ry="1" transform="rotate(-20 7.6 13.2)"></ellipse>
+  </svg>
+</button>
+
 <button id="muteToggleBtn" type="button" aria-label="Toggle sound">
   <svg viewBox="0 0 24 24" width="20" height="20">
     <path class="mt-body" d="M4 9.5V14.5H7.6L12.5 18.5V5.5L7.6 9.5H4Z"></path>
@@ -751,6 +865,12 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script>
+// Site-wide theme setting, shared by the window-photo setup below and the
+// Halloween toggle script near the end of the file so both read the same
+// value. "normal" | "halloween" | "christmas"
+window.currentTheme = "normal";
+</script>
 <script>
 (function(){
 
@@ -3553,8 +3673,15 @@
   // the day landscape. It only ever fades in/out via its own opacity — set by
   // the dedicated Halloween toggle script near the end of the file — and never
   // touches the day/night crossfade, sunFactor, rain, or any other effect.
-  const HALLOWEEN_PHOTO = 'images/image_014.jpg';
-  const HALLOWEEN_DAY_PHOTO = 'images/image_015.jpg';
+  // Which image set fills this window layer depends on window.currentTheme.
+  // "normal" and "halloween" keep using the original Halloween photos
+  // (unchanged); "christmas" swaps in the Christmas night/day photos.
+  const HALLOWEEN_PHOTO = (window.currentTheme === 'christmas')
+    ? 'images/christmas_night.jpg'
+    : 'images/image_014.jpg';
+  const HALLOWEEN_DAY_PHOTO = (window.currentTheme === 'christmas')
+    ? 'images/christmas_day.jpg'
+    : 'images/image_015.jpg';
 
   function makeHalloweenTexture(windowAspect, imageAspect, dataUri){
     const tex = new THREE.TextureLoader().load(dataUri || HALLOWEEN_PHOTO, function(loaded){
@@ -9354,10 +9481,12 @@
 // requestAnimationFrame loop, and never reads or writes sunFactor, the
 // room's lighting. No other effect is attached to it.
 (function(){
-  // Theme setting: "normal" keeps Halloween completely inactive (button
-  // hidden, no listeners attached, nothing else in this file touched).
-  // "halloween" runs the existing Halloween behavior exactly as before.
-  const currentTheme = "halloween";
+  // Theme setting (shared with window.currentTheme, set near the top of the
+  // file): "normal" keeps Halloween completely inactive (button hidden, no
+  // listeners attached, nothing else in this file touched). "halloween"
+  // runs the existing Halloween behavior exactly as before. "christmas"
+  // also leaves this button/behavior untouched for now.
+  const currentTheme = window.currentTheme;
 
   const btn = document.getElementById('halloweenToggleBtn');
   if(!btn) return;
@@ -9453,6 +9582,37 @@
     window.__halloweenActive = isHalloween;
     btn.classList.toggle('active', isHalloween);
     setHalloween(isHalloween);
+  });
+})();
+</script>
+
+<script>
+// Christmas toggle button: currently just shows/hides itself based on
+// window.currentTheme and flips its own "active" look on click, mirroring
+// the Halloween toggle's show/hide pattern above. No visual effects (LEDs,
+// snow, or anything else in the scene) are wired up to it yet — that comes
+// later, once the Christmas scene assets exist.
+(function(){
+  // Theme setting (shared with window.currentTheme, set near the top of the
+  // file): "normal" and "halloween" keep this button hidden and completely
+  // inactive. "christmas" shows it and enables the click toggle below.
+  const currentTheme = window.currentTheme;
+
+  const btn = document.getElementById('christmasToggleBtn');
+  if(!btn) return;
+
+  if(currentTheme !== "christmas"){
+    btn.style.display = 'none';
+    return;
+  }
+
+  let isChristmas = false;
+  window.__christmasActive = false;
+
+  btn.addEventListener('click', function(){
+    isChristmas = !isChristmas;
+    window.__christmasActive = isChristmas;
+    btn.classList.toggle('active', isChristmas);
   });
 })();
 </script>
