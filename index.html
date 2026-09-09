@@ -380,43 +380,6 @@
     fill: rgba(255,255,255,0.4);
   }
 
-  /* Christmas snow — a lightweight, screen-space overlay of gently falling
-     snowflakes, entirely independent of the Three.js scene (built and
-     appended by the Christmas toggle script only when
-     window.currentTheme === "christmas"). Every flake animates only
-     `transform` on an infinite CSS keyframe loop — no per-frame JS, so it
-     stays cheap even with several dozen on screen. The layer's own
-     opacity starts at 0 and is eased by that same script in lockstep with
-     the window photo's fade, so the snow appears/disappears together with
-     the rest of the Christmas scene rather than on its own timer.
-     Non-interactive and stacked above the 3D canvas but below the toggle
-     buttons. */
-  #christmasSnowLayer{
-    position: fixed;
-    inset: 0;
-    z-index: 5;
-    pointer-events: none;
-    overflow: hidden;
-    opacity: 0;
-  }
-  #christmasSnowLayer .xm-snowflake{
-    position: absolute;
-    top: -12px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #ffffff 0%, rgba(255,255,255,0.9) 45%, rgba(255,255,255,0) 100%);
-    animation-name: xmSnowFall;
-    animation-timing-function: linear;
-    animation-iteration-count: infinite;
-    will-change: transform;
-  }
-  @keyframes xmSnowFall{
-    0%   { transform: translate(0, -5vh) rotate(0deg); }
-    25%  { transform: translate(var(--xm-drift, 12px), 25vh) rotate(45deg); }
-    50%  { transform: translate(calc(var(--xm-drift, 12px) * -1), 50vh) rotate(90deg); }
-    75%  { transform: translate(var(--xm-drift, 12px), 75vh) rotate(135deg); }
-    100% { transform: translate(0, 108vh) rotate(180deg); }
-  }
-
   /* Mute toggle — mirrors #themeToggleBtn's glassy circular style exactly,
      mirrored to the top-left corner. Purely a self-contained icon toggle
      that flips the muted property on #bgMusic. */
@@ -906,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -3922,6 +3885,125 @@ window.currentTheme = "christmas";
     halloweenLeaves.push(leaf);
   }
   windowSceneRefs.halloweenLeaves = halloweenLeaves;
+
+  // ---------- Christmas snowstorm, outside the window (independent toggle) ----------
+  // A field of small falling snowflake sprites, all sharing one soft round
+  // dot texture (tinted/sized per-instance the same way the leaves above
+  // are tinted per-instance), drifting down through the window's outside
+  // scene like the leaves but tuned for an active, windy snowstorm rather
+  // than a lazy autumn drift: each flake carries a "depth" (0 = far/back,
+  // 1 = near/front) that drives its size, speed, brightness and how far it
+  // leans sideways as it falls, so near flakes read as big, quick and
+  // bright while far flakes read as small, slow and faint — a cheap but
+  // effective depth cue without any real 3D parallax. Every flake sits at
+  // zero opacity by default and is scaled only by the Christmas toggle's
+  // own fade (windowSceneRefs.halloweenMat.opacity — the same opacity that
+  // also drives the Christmas photo layer, mirroring how hwOn drives the
+  // Halloween leaves), so the whole storm fades in/out with the Christmas
+  // scene and is otherwise invisible. Restricted to currentTheme ===
+  // "christmas" in the render loop below so it never appears while that
+  // same opacity is instead fading in the Halloween leaves/photo.
+  function makeSnowflakeTexture(){
+    // A soft, feathered white dot — reads as a snowflake at these small
+    // on-screen sizes without the cost of drawing individual crystal arms.
+    const s = 64;
+    const c = document.createElement('canvas'); c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.9)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(s/2, s/2, s/2, 0, Math.PI*2);
+    ctx.fill();
+    return new THREE.CanvasTexture(c);
+  }
+  const snowSpriteTex = makeSnowflakeTexture();
+  // Fewer flakes on the mobile perf tier, same ratio the leaves use above.
+  const snowCount = isMobilePerfTier ? 55 : 110;
+  const snowflakes = [];
+  const snowGroup = new THREE.Group();
+  snowGroup.position.z = 0.0019; // just in front of the leaf layer, still behind the frame/glass
+  windowGroup.add(snowGroup);
+
+  const snowHalfSpanX = winW * 0.5;
+  function pickSnowBaseX(){
+    return (Math.random()*2 - 1) * snowHalfSpanX;
+  }
+
+  for(let i=0;i<snowCount;i++){
+    // depth: 0 = far/back (small, slow, dim), 1 = near/front (large, fast, bright).
+    const depth = Math.random();
+    const baseSize = winH * (0.006 + depth*0.022 + Math.random()*0.006);
+    const mat = new THREE.MeshBasicMaterial({
+      map: snowSpriteTex, color: 0xffffff,
+      transparent: true, depthWrite: false, opacity: 0
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(baseSize, baseSize), mat);
+    const baseX = pickSnowBaseX();
+    // Flakes are queued above the window's top edge, spread across a bit
+    // more than one full window-height of "waiting room" above the entry
+    // line (same trick the leaves use), so the first frames of Christmas
+    // mode already show a storm in progress rather than an empty sky that
+    // slowly fills in.
+    const snowTopEdge = winH*0.5 - winH*0.02;
+    const flake = {
+      mesh, mat, depth,
+      baseX,
+      y: snowTopEdge + Math.random()*winH*1.3,
+      fallSpeed: winH * (0.028 + depth*0.085 + Math.random()*0.02),
+      // Gust modulation on fall speed, so the storm's intensity breathes
+      // rather than falling at one flat, mechanical rate.
+      gustAmp: 0.15 + Math.random()*0.25,
+      gustFreq: 0.2 + Math.random()*0.3,
+      gustPhase: Math.random()*Math.PI*2,
+      // Sideways lean per unit fallen — a steady-ish "wind" pushing flakes
+      // to one side as they drop, biased mostly one direction (like real
+      // wind-driven snow) but with per-flake spread so it doesn't look
+      // like uniform rain-on-an-angle.
+      windLean: 0.10 + Math.random()*0.22,
+      // A small extra side-to-side sway layered on top of the wind lean,
+      // for a bit of natural flutter.
+      swayAmp: winW * (0.004 + Math.random()*0.01) * (0.4 + depth*0.6),
+      swayFreq: 0.35 + Math.random()*0.55,
+      swayPhase: Math.random()*Math.PI*2,
+      rotSpeed: (Math.random()-0.5) * 1.1,
+      rotPhase: Math.random()*Math.PI*2,
+      baseOpacity: 0.22 + depth*0.55 + Math.random()*0.15,
+      baseSize
+    };
+    mesh.position.set(baseX, flake.y, depth*0.0006 - 0.0003);
+    snowGroup.add(mesh);
+    snowflakes.push(flake);
+  }
+  windowSceneRefs.snowflakes = snowflakes;
+
+  // A faint, warm additive glow low in the window, standing in for ambient
+  // outdoor light (porch/streetlights) catching the falling snow — same
+  // radial-gradient-on-canvas technique as the other window glows above,
+  // built locally so nothing shared is touched. Fades in/out with the same
+  // Christmas opacity as the flakes themselves, and breathes gently with
+  // night-factor so it's barely-there by day and a soft glow at night.
+  function makeSnowGlowTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+    grad.addColorStop(0,    'rgba(255,244,214,0.5)');
+    grad.addColorStop(0.5,  'rgba(255,230,180,0.18)');
+    grad.addColorStop(1,    'rgba(255,230,180,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  const snowGlowTex = makeSnowGlowTexture();
+  const snowGlowMat = new THREE.MeshBasicMaterial({
+    map: snowGlowTex, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0
+  });
+  const snowGlow = new THREE.Mesh(new THREE.PlaneGeometry(winW*0.9, winH*0.7), snowGlowMat);
+  snowGlow.position.set(0, -winH*0.12, 0.0017);
+  windowGroup.add(snowGlow);
+  windowSceneRefs.snowGlowMat = snowGlowMat;
 
   // ---------- Daytime clouds, drifting over the landscape photo ----------
   // The photo itself has clouds baked into its pixels, so they'd otherwise
@@ -9177,6 +9259,66 @@ window.currentTheme = "christmas";
       }
     }
 
+    // Falling snow outside the Christmas window: a windy snowstorm of small
+    // sprites at varied depth (far = small/slow/dim, near = large/fast/
+    // bright), each drifting diagonally per its own wind-lean plus a light
+    // sway, spinning slowly, and recycling back above the window once it
+    // falls out of view — the same continuous-rain approach the Halloween
+    // leaves use above. Gated by the Christmas toggle's own fade (snowOn
+    // below, read from the same opacity the leaves read as hwOn) and
+    // restricted to currentTheme === "christmas" so the storm never shows
+    // up while that same opacity is instead fading in the Halloween leaves.
+    if(windowSceneRefs.snowflakes){
+      const snowOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const flakes = windowSceneRefs.snowflakes;
+      const halfWinH = winH * 0.5;
+      const halfWinW = winW * 0.5;
+      const snowTopEdge = halfWinH - winH*0.02;
+      const snowFloorEdge = -halfWinH;
+      const snowFadeBand = winH*0.05;
+      const snowHEdge = halfWinW * 0.96;
+      const snowHFadeWidth = winW * 0.08;
+      for(let i=0;i<flakes.length;i++){
+        const flake = flakes[i];
+        const gust = 1 + flake.gustAmp * Math.sin(t*flake.gustFreq + flake.gustPhase);
+        flake.y -= flake.fallSpeed * gust * dt;
+        if(flake.y < snowFloorEdge - snowFadeBand){
+          // Recycled flakes reappear above the entry line (resetting how
+          // far they've "fallen" also resets their wind-lean drift), same
+          // fade-band easing the leaves use so nothing pops in/out.
+          flake.y = snowTopEdge + snowFadeBand*0.5 + Math.random()*winH*0.4;
+          flake.baseX = pickSnowBaseX();
+          flake.swayPhase = Math.random()*Math.PI*2;
+          flake.rotPhase = Math.random()*Math.PI*2;
+        }
+        const fallen = snowTopEdge - flake.y; // distance dropped since last reset
+        const sway = Math.sin(t*flake.swayFreq + flake.swayPhase) * flake.swayAmp;
+        const windX = fallen * flake.windLean * gust;
+        const x = flake.baseX + windX + sway;
+        flake.mesh.position.x = x;
+        flake.mesh.position.y = flake.y;
+        flake.mesh.rotation.z = flake.rotPhase + t*flake.rotSpeed;
+        // Smoothly fade in/out crossing the top/floor lines, same as the
+        // leaves, plus a horizontal fade near the window's side edges so
+        // wind-blown flakes never pop out of view mid-drift.
+        let edgeFade = 1;
+        if(flake.y > snowTopEdge){
+          edgeFade = Math.max(0, 1 - (flake.y - snowTopEdge)/snowFadeBand);
+        } else if(flake.y < snowFloorEdge){
+          edgeFade = Math.max(0, 1 - (snowFloorEdge - flake.y)/snowFadeBand);
+        }
+        const hFade = Math.max(0, Math.min(1, 1 - (Math.abs(x) - snowHEdge)/snowHFadeWidth));
+        flake.mat.opacity = snowOn * flake.baseOpacity * edgeFade * hFade;
+      }
+    }
+    // Ambient glow behind the falling snow, standing in for outdoor lights
+    // catching the flakes — fades with the same Christmas opacity as the
+    // snow itself, and brightens gently at night vs. barely-there by day.
+    if(windowSceneRefs.snowGlowMat){
+      const snowOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      windowSceneRefs.snowGlowMat.opacity = snowOn * (0.45 + nightF*0.5) * (0.9 + Math.sin(t*0.6)*0.1);
+    }
+
 
     // Gently pulse the coffee table's self-lit glow (tabletop/leg emissive
     // and the halo/rim meshes) so the whole table breathes softly rather
@@ -9647,12 +9789,7 @@ window.currentTheme = "christmas";
 // as the Halloween toggle's purple->orange LEDs — just with its own
 // colors/texture defined locally here, so window.__roomDayNight's shared
 // purpleGlowTex/orangeGlowTex and the Halloween script's own colors are
-// completely untouched.
-//
-// Finally, it builds a lightweight screen-space snow overlay (plain CSS
-// `transform`-only keyframe animations, no per-frame JS) and fades its
-// container's opacity in lockstep with the same window-photo progress, so
-// snow appears/disappears together with the rest of the Christmas scene.
+// completely untouched. No snow, or anything else, is wired up yet.
 (function(){
   // Theme setting (shared with window.currentTheme, set near the top of the
   // file): "normal" and "halloween" keep this button hidden and completely
@@ -9729,47 +9866,13 @@ window.currentTheme = "christmas";
     }
   }
 
-  // ---------- Snow overlay (screen-space, independent of the 3D scene) ----------
-  // A handful of small, softly-blurred CSS "dots" drift down the whole
-  // viewport on a slow (14–26s), gently swaying, infinite loop. Built once
-  // up front (count trimmed on the same mobile-perf tier flag the 3D scene
-  // itself uses) and left in the DOM at all times — like the window photo
-  // layer, it starts invisible (opacity 0, set in CSS) and is only ever
-  // revealed by easing its opacity, never by adding/removing flakes.
-  const snowLayer = document.createElement('div');
-  snowLayer.id = 'christmasSnowLayer';
-  snowLayer.setAttribute('aria-hidden', 'true');
-  const isMobilePerf = document.documentElement.classList.contains('perf-mobile');
-  const snowflakeCount = isMobilePerf ? 20 : 40;
-  for(let i=0;i<snowflakeCount;i++){
-    const flake = document.createElement('div');
-    flake.className = 'xm-snowflake';
-    const size = 2 + Math.random()*3.5;          // 2–5.5px: small and subtle
-    const duration = 14 + Math.random()*12;       // 14–26s: slow, natural fall
-    const delay = -Math.random()*duration;        // negative delay staggers starting points
-    const drift = 10 + Math.random()*22;          // px of side-to-side sway
-    flake.style.left = (Math.random()*100).toFixed(2) + '%';
-    flake.style.width = size.toFixed(2) + 'px';
-    flake.style.height = size.toFixed(2) + 'px';
-    flake.style.opacity = (0.35 + Math.random()*0.45).toFixed(2);
-    flake.style.animationDuration = duration.toFixed(2) + 's';
-    flake.style.animationDelay = delay.toFixed(2) + 's';
-    flake.style.setProperty('--xm-drift', drift.toFixed(1) + 'px');
-    snowLayer.appendChild(flake);
-  }
-  document.body.appendChild(snowLayer);
-
   function stepFade(now){
     const anim = fadeAnim;
     const ctx = window.__roomDayNight;
     if(!anim || !ctx || !ctx.windowScene || !ctx.windowScene.halloweenMat) return;
     const t = Math.min(1, (now - anim.start) / anim.dur);
     const e = t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; // easeInOutCubic
-    const opacity = anim.from + (anim.to - anim.from) * e;
-    ctx.windowScene.halloweenMat.opacity = opacity;
-    // Snow fades in lockstep with the window photo — same progress value,
-    // same start/end, so both arrive and leave together.
-    snowLayer.style.opacity = opacity;
+    ctx.windowScene.halloweenMat.opacity = anim.from + (anim.to - anim.from) * e;
     // LED color eases using the same progress and direction as the window
     // scene fade, so both land together.
     applyScreenLedColorChristmas(anim.to > anim.from ? e : 1 - e);
@@ -9787,7 +9890,6 @@ window.currentTheme = "christmas";
       isChristmas = on;
       btn.classList.toggle('active', on);
       applyScreenLedColorChristmas(on ? 1 : 0);
-      snowLayer.style.opacity = on ? 1 : 0;
       return;
     }
     const from = ctx.windowScene.halloweenMat.opacity;
