@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9630,31 +9630,31 @@ window.currentTheme = "christmas";
   let fadeAnim = null; // { from, to, start, dur }
 
   // Purple (resting) plus a festive green target color for the TV +
-  // monitor LED backlight strips, nudged slightly toward a warm white so
-  // it reads as a cozy accent rather than a pure, saturated stage-light
-  // green.
+  // monitor LED backlight strips, nudged just barely toward a warm white
+  // so it reads as a rich, saturated green rather than a pastel one.
   const ledPurpleColor = new THREE.Color(0x2e0854);
   const warmWhite = new THREE.Color(0xfff0d9);
-  const ledChristmasGreen = new THREE.Color(0x2e7d32).lerp(warmWhite, 0.18);
+  const ledChristmasGreen = new THREE.Color(0x2e7d32).lerp(warmWhite, 0.05);
   const ledLerpColor = new THREE.Color();
 
-  // Warm-white glow-map wash for the soft halo bloomed onto the wall
-  // behind each panel — the same role orangeGlowTex plays for Halloween,
-  // built locally so nothing shared is touched.
+  // Green glow-map wash for the soft halo bloomed onto the wall behind
+  // each panel — the same role orangeGlowTex plays for Halloween, built
+  // locally so nothing shared is touched. Matches the LED strips' own
+  // green rather than reading as a plain white wash.
   function christmasGlowTexture(){
     const c = document.createElement('canvas'); c.width=c.height=256;
     const ctx = c.getContext('2d');
     const grad = ctx.createRadialGradient(128,128,0,128,128,128);
-    grad.addColorStop(0,   'rgba(255,244,214,0.55)');
-    grad.addColorStop(0.45,'rgba(255,224,170,0.28)');
-    grad.addColorStop(1,   'rgba(255,224,170,0)');
+    grad.addColorStop(0,   'rgba(76,167,80,0.55)');
+    grad.addColorStop(0.45,'rgba(46,125,50,0.28)');
+    grad.addColorStop(1,   'rgba(46,125,50,0)');
     ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
     return new THREE.CanvasTexture(c);
   }
   const christmasGlowTex = christmasGlowTexture();
 
   // Swaps the TV + monitor LED backlight strips' glow-map shape to the
-  // warm-white Christmas wash (or back to resting purple). Mirrors the
+  // green Christmas wash (or back to resting purple). Mirrors the
   // Halloween toggle's setScreenLedTexture, only touching refs that have
   // a .led point light, same as there.
   function setScreenLedTextureChristmas(on){
