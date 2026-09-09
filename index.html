@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9050,21 +9050,26 @@ window.currentTheme = "christmas";
     // independently by its own script) times nightFactor, so the glow is
     // faint in daylight and strikingly more noticeable once night falls —
     // exactly like real jack-o'-lantern light would read outside a window.
+    // Restricted to currentTheme === "halloween" since the same opacity
+    // now also drives the Christmas photo layer's fade, and that photo
+    // shouldn't bring the pumpkin-glow lighting along with it.
     if(windowSceneRefs.halloweenGlowLight){
-      const hwOn = windowSceneRefs.halloweenMat ? windowSceneRefs.halloweenMat.opacity : 0;
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
       const flicker = 0.92 + Math.sin(t*2.3)*0.05 + Math.sin(t*5.1)*0.03;
       windowSceneRefs.halloweenGlowLight.intensity = hwOn * (0.18 + nightF*1.55) * flicker;
     }
     if(windowSceneRefs.halloweenBeamMat){
-      const hwOn = windowSceneRefs.halloweenMat ? windowSceneRefs.halloweenMat.opacity : 0;
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
       windowSceneRefs.halloweenBeamMat.opacity = hwOn * (0.06 + nightF*0.5) * (0.9 + Math.sin(t*0.45)*0.1);
     }
-    // Daytime Halloween photo: crossfades in front of the night Halloween
-    // photo as the day/night toggle's own crossfade (windowSceneRefs.dayMat
-    // .opacity, 0 at night to 1 at day) rises, so switching to day while
-    // Halloween is on shows the daytime photo instead — independent of hwOn,
-    // which keeps driving the leaves, LED colors, glow light, and beam above
-    // exactly as before.
+    // Daytime Halloween/Christmas photo: crossfades in front of the night
+    // photo in the same layer as the day/night toggle's own crossfade
+    // (windowSceneRefs.dayMat.opacity, 0 at night to 1 at day) rises, so
+    // switching to day while this layer is faded in shows the daytime photo
+    // instead — independent of hwOn, which keeps driving the leaves, LED
+    // colors, glow light, and beam above exactly as before. This part isn't
+    // theme-gated: it's generic crossfade math that works the same whether
+    // the layer currently holds the Halloween photos or the Christmas ones.
     if(windowSceneRefs.halloweenDayMat){
       const hwOn = windowSceneRefs.halloweenMat ? windowSceneRefs.halloweenMat.opacity : 0;
       const dayFactor = windowSceneRefs.dayMat ? windowSceneRefs.dayMat.opacity : 0;
@@ -9082,9 +9087,11 @@ window.currentTheme = "christmas";
     // while the Halloween scene is faded in. Leaves on the window's TV-
     // corner half (see pickLeafBaseX above) get a small size/opacity boost
     // since that half reads more oblique/foreshortened from the usual
-    // camera angles and would otherwise look emptier.
+    // camera angles and would otherwise look emptier. Also restricted to
+    // currentTheme === "halloween" so this autumn-leaf rain doesn't appear
+    // when the same opacity is instead fading in the Christmas photo.
     if(windowSceneRefs.halloweenLeaves){
-      const hwOn = windowSceneRefs.halloweenMat ? windowSceneRefs.halloweenMat.opacity : 0;
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
       const leaves = windowSceneRefs.halloweenLeaves;
       const halfWinH = winH * 0.5;
       // The entry line sits just inside the true top edge (so leaves never
@@ -9587,11 +9594,19 @@ window.currentTheme = "christmas";
 </script>
 
 <script>
-// Christmas toggle button: currently just shows/hides itself based on
-// window.currentTheme and flips its own "active" look on click, mirroring
-// the Halloween toggle's show/hide pattern above. No visual effects (LEDs,
-// snow, or anything else in the scene) are wired up to it yet — that comes
-// later, once the Christmas scene assets exist.
+// Christmas toggle button: fades the window photo layer — the same
+// generic overlay plane the Halloween toggle drives (windowSceneRefs.
+// halloweenMat / halloweenDayMat) — in and out, in and out over a plain
+// requestAnimationFrame loop identical in shape to the Halloween toggle's
+// own. That layer is already loaded with images/christmas_night.jpg and
+// images/christmas_day.jpg instead of the Halloween photos, since it was
+// built based on window.currentTheme (see the window setup earlier in the
+// file). The day/night crossfade between those two photos keeps working
+// automatically: it's driven by generic code in the main render loop that
+// isn't specific to either theme. This script never touches LEDs, the
+// pumpkin glow light/beam, or the leaf rain — those stay off for Christmas
+// (guarded by currentTheme checks at their own call sites) until they get
+// their own Christmas-appropriate versions (snow, etc.) later.
 (function(){
   // Theme setting (shared with window.currentTheme, set near the top of the
   // file): "normal" and "halloween" keep this button hidden and completely
@@ -9608,11 +9623,40 @@ window.currentTheme = "christmas";
 
   let isChristmas = false;
   window.__christmasActive = false;
+  let fadeAnim = null; // { from, to, start, dur }
+
+  function stepFade(now){
+    const anim = fadeAnim;
+    const ctx = window.__roomDayNight;
+    if(!anim || !ctx || !ctx.windowScene || !ctx.windowScene.halloweenMat) return;
+    const t = Math.min(1, (now - anim.start) / anim.dur);
+    const e = t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; // easeInOutCubic
+    ctx.windowScene.halloweenMat.opacity = anim.from + (anim.to - anim.from) * e;
+    if(t >= 1){
+      fadeAnim = null;
+      return;
+    }
+    requestAnimationFrame(stepFade);
+  }
+
+  function setChristmas(on){
+    const ctx = window.__roomDayNight;
+    if(!ctx || !ctx.windowScene || !ctx.windowScene.halloweenMat){
+      isChristmas = on;
+      btn.classList.toggle('active', on);
+      return;
+    }
+    const from = ctx.windowScene.halloweenMat.opacity;
+    const to = on ? 1 : 0;
+    fadeAnim = { from, to, start: performance.now(), dur: 1000 };
+    requestAnimationFrame(stepFade);
+  }
 
   btn.addEventListener('click', function(){
     isChristmas = !isChristmas;
     window.__christmasActive = isChristmas;
     btn.classList.toggle('active', isChristmas);
+    setChristmas(isChristmas);
   });
 })();
 </script>
