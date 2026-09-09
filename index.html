@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -949,6 +949,13 @@ window.currentTheme = "christmas";
   // strand a little real illumination. The render loop fades all of it
   // in/out together, gated to currentTheme === "christmas".
   let deskChristmasLights = null;
+
+  // Refs for the Christmas string-light strand run around the ceiling's
+  // perimeter (all four wall/ceiling seams), set once the room shell is
+  // built below. Same shared-material approach as the desk strand above,
+  // and faded in/out by the same render-loop logic, gated to
+  // currentTheme === "christmas".
+  let ceilingChristmasLights = null;
 
   // World-space point hovering just above the coffee table, set once the
   // table is built below. The render loop projects this into screen space
@@ -1990,6 +1997,128 @@ window.currentTheme = "christmas";
   baseboard(L, Math.PI/2, -halfW + 0.001, 0);
   baseboard(L, -Math.PI/2, halfW - 0.001, 0);
   baseboard(W, Math.PI, 0, halfL - 0.001);
+
+  // ---------- Christmas string lights, wrapped around the ceiling perimeter ----------
+  // A single continuous strand of small red/green/warm-white bulbs run
+  // along all four ceiling/wall seams, following the room's real corners
+  // (traced as one closed rectangular loop matching W/L/H) rather than a
+  // flat overlay pasted over the view. Same approach as the desk-leg
+  // strand elsewhere in the scene: built once, always present, every
+  // bulb/glow/point-light starts at zero intensity/opacity and is only
+  // ever driven above zero by the render loop below, gated to
+  // currentTheme === "christmas" and faded by the same opacity the
+  // Christmas toggle already animates for the window photo — so this
+  // strand arrives and leaves in lockstep with everything else the toggle
+  // controls, and is completely inert (and invisible) in every other theme.
+  {
+    // Dropped a hair below the true ceiling line so the bulbs read as
+    // mounted just under the crown rather than clipping into the ceiling
+    // plane, and pulled in slightly from the wall faces so they sit
+    // against the wall rather than floating out over the room.
+    const ceilLightY = H - 0.06;
+    const ceilInset = 0.05;
+    const clx = halfW - ceilInset;
+    const clz = halfL - ceilInset;
+
+    // Local copies of the bulb-color palette and soft-glow texture (kept
+    // self-contained here rather than reusing the desk strand's versions,
+    // since those are declared inside their own scoped block further down
+    // and aren't in scope yet at this point in the room build).
+    function makeCeilBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const ceilBulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const ceilBulbGlowTex = makeCeilBulbGlowTexture();
+    const ceilBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const ceilBulbMats = ceilBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const ceilBulbGlowMats = ceilBulbColors.map(c => new THREE.SpriteMaterial({
+      map: ceilBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    ceilingChristmasLights = { bulbMats: ceilBulbMats, bulbGlowMats: ceilBulbGlowMats, pointLights: [] };
+
+    // One continuous loop tracing the four ceiling/wall seams, corner to
+    // corner, so the strand looks physically run around the room rather
+    // than four independent segments. Order: back wall (-z) left->right,
+    // right wall (+x) back->front, front/south wall (+z) right->left,
+    // left wall (-x) front->back, closing the loop.
+    const ceilBulbSpacing = 0.22; // even spacing along the strand, meters
+    const ceilSegments = [
+      { x0: -clx, z0: -clz, x1: clx,  z1: -clz }, // back wall seam
+      { x0: clx,  z0: -clz, x1: clx,  z1: clz  }, // right wall seam
+      { x0: clx,  z0: clz,  x1: -clx, z1: clz  }, // front wall seam
+      { x0: -clx, z0: clz,  x1: -clx, z1: -clz } // left wall seam
+    ];
+
+    // A very slight downward sag between "hook points" along each wall
+    // (like a real strand tacked up every foot or so, not pulled drum-tight)
+    // so the loop reads as physically hung rather than a rigid, perfectly
+    // straight rail.
+    const sagHooks = 6;      // hook points per wall run
+    const sagAmount = 0.012; // how far each mid-span dips, meters
+
+    let colorIdx = 0;
+    ceilSegments.forEach(seg => {
+      const segLen = Math.hypot(seg.x1 - seg.x0, seg.z1 - seg.z0);
+      const count = Math.max(2, Math.round(segLen / ceilBulbSpacing));
+      for(let i=0;i<count;i++){
+        const tt = i/(count-1);
+        const x = seg.x0 + (seg.x1 - seg.x0) * tt;
+        const z = seg.z0 + (seg.z1 - seg.z0) * tt;
+        // Small sinusoidal sag repeating every wall-run so each span
+        // between hooks dips gently at its middle and returns to the
+        // seam height at each hook point.
+        const sagPhase = (tt * sagHooks) % 1;
+        const sag = Math.sin(sagPhase * Math.PI) * sagAmount;
+        const y = ceilLightY - sag;
+
+        const ci = colorIdx % ceilBulbColors.length;
+        colorIdx++;
+        const bulb = new THREE.Mesh(ceilBulbGeo, ceilBulbMats[ci]);
+        bulb.position.set(x, y, z);
+        room.add(bulb);
+        const glow = new THREE.Sprite(ceilBulbGlowMats[ci]);
+        glow.scale.set(0.05, 0.05, 1);
+        glow.position.set(x, y, z);
+        room.add(glow);
+      }
+    });
+
+    // A handful of soft, low-intensity point lights spaced around the
+    // loop (one roughly mid-wall per side) so the strand casts a faint
+    // warm wash onto the nearby ceiling and upper walls, rather than only
+    // reading as glowing sprites. Short falloff distance keeps each pool
+    // small and cozy instead of washing out the room.
+    const ceilLightPositions = [
+      { x: 0,    z: -clz },
+      { x: clx,  z: 0    },
+      { x: 0,    z: clz  },
+      { x: -clx, z: 0    }
+    ];
+    ceilLightPositions.forEach(p => {
+      const pl = new THREE.PointLight(0xffdca0, 0, 1.6, 2.0);
+      pl.position.set(p.x, ceilLightY - 0.05, p.z);
+      room.add(pl);
+      ceilingChristmasLights.pointLights.push(pl);
+    });
+  }
 
   // ---------- Gallery wall — framed pictures on the west (left) wall, ----------
   // ---------- directly across the room from the window on the east wall. ----------
@@ -9480,6 +9609,29 @@ window.currentTheme = "christmas";
       }
       for(let i=0;i<deskChristmasLights.pointLights.length;i++){
         deskChristmasLights.pointLights[i].intensity = xmasOn * 0.35 * shimmer;
+      }
+    }
+
+    // Christmas string lights run around the ceiling perimeter: same
+    // shared-material fade/shimmer approach as the desk strand above, so
+    // the whole loop arrives and leaves in lockstep with the rest of the
+    // Christmas toggle's effects. Point lights are kept a touch dimmer
+    // than the desk strand's since there are four of them spread around a
+    // much larger room, and they only need to gently wash the nearby
+    // ceiling/wall, not light the room.
+    if(ceilingChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const shimmer = 0.94 + Math.sin(t*1.3 + 1.7)*0.04 + Math.sin(t*3.7 + 0.6)*0.02;
+      for(let i=0;i<ceilingChristmasLights.bulbMats.length;i++){
+        const m = ceilingChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+      }
+      for(let i=0;i<ceilingChristmasLights.bulbGlowMats.length;i++){
+        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.8 * shimmer;
+      }
+      for(let i=0;i<ceilingChristmasLights.pointLights.length;i++){
+        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.22 * shimmer;
       }
     }
 
