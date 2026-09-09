@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9605,8 +9605,8 @@ window.currentTheme = "christmas";
 // automatically: it's driven by generic code in the main render loop that
 // isn't specific to either theme.
 //
-// It also eases the TV + monitor LED backlight strips over to festive
-// red/green, using the same texture-swap + per-frame color-lerp mechanism
+// It also eases the TV + monitor LED backlight strips over to a festive
+// green, using the same texture-swap + per-frame color-lerp mechanism
 // as the Halloween toggle's purple->orange LEDs — just with its own
 // colors/texture defined locally here, so window.__roomDayNight's shared
 // purpleGlowTex/orangeGlowTex and the Halloween script's own colors are
@@ -9629,14 +9629,12 @@ window.currentTheme = "christmas";
   window.__christmasActive = false;
   let fadeAnim = null; // { from, to, start, dur }
 
-  // Purple (resting) plus festive red/green target colors for the TV +
-  // monitor LED backlight strips. Each strip alternates between red and
-  // green (see applyChristmasLedColor below) and both are nudged slightly
-  // toward a warm white so they read as a cozy accent rather than pure,
-  // saturated stage-light colors.
+  // Purple (resting) plus a festive green target color for the TV +
+  // monitor LED backlight strips, nudged slightly toward a warm white so
+  // it reads as a cozy accent rather than a pure, saturated stage-light
+  // green.
   const ledPurpleColor = new THREE.Color(0x2e0854);
   const warmWhite = new THREE.Color(0xfff0d9);
-  const ledChristmasRed = new THREE.Color(0xe63946).lerp(warmWhite, 0.18);
   const ledChristmasGreen = new THREE.Color(0x2e7d32).lerp(warmWhite, 0.18);
   const ledLerpColor = new THREE.Color();
 
@@ -9673,23 +9671,19 @@ window.currentTheme = "christmas";
     }
   }
 
-  // Eases each LED strip's actual light color between purple and its own
-  // festive target — alternating red/green strip by strip (TV, then each
-  // monitor, in the order they were created) — given the same 0..1
-  // progress used for the window's opacity fade, so the lights arrive
-  // exactly when the Christmas scene finishes fading in.
+  // Eases each LED strip's actual light color from purple to the festive
+  // green target, given the same 0..1 progress used for the window's
+  // opacity fade, so the lights arrive exactly when the Christmas scene
+  // finishes fading in.
   function applyScreenLedColorChristmas(e){
     const ctx = window.__roomDayNight;
     if(!ctx || !ctx.screenGlowRefs) return;
-    let ledIndex = 0;
     for(let i=0;i<ctx.screenGlowRefs.length;i++){
       const ref = ctx.screenGlowRefs[i];
       if(!ref || !ref.led) continue;
-      const target = (ledIndex % 2 === 0) ? ledChristmasRed : ledChristmasGreen;
-      ledLerpColor.copy(ledPurpleColor).lerp(target, e);
+      ledLerpColor.copy(ledPurpleColor).lerp(ledChristmasGreen, e);
       ref.led.color.copy(ledLerpColor);
       if(ref.spill) ref.spill.color.copy(ledLerpColor);
-      ledIndex++;
     }
   }
 
