@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -10463,61 +10463,83 @@ window.currentTheme = "christmas";
   window.__christmasActive = false;
   let fadeAnim = null; // { from, to, start, dur }
 
-  // Purple (resting) plus a festive green target color for the TV +
-  // monitor LED backlight strips, nudged just barely toward a warm white
-  // so it reads as a rich, saturated green rather than a pastel one.
+  // Purple (resting) plus a traditional Christmas palette for the TV +
+  // monitor LED backlight strips — warm white as the primary tone, with
+  // soft, desaturated red and green as accents (rather than one uniform
+  // saturated green), so the room reads like a classic warm-white string
+  // with a couple of colored bulbs mixed in. Each color is blended well
+  // toward the warm white so none of them ever look neon or harsh.
   const ledPurpleColor = new THREE.Color(0x2e0854);
-  const warmWhite = new THREE.Color(0xfff0d9);
-  const ledChristmasGreen = new THREE.Color(0x2e7d32).lerp(warmWhite, 0.05);
+  const ledWarmWhite = new THREE.Color(0xffdfb0);
+  const ledSoftRed   = new THREE.Color(0xd6261b).lerp(ledWarmWhite, 0.55);
+  const ledSoftGreen = new THREE.Color(0x2e7d32).lerp(ledWarmWhite, 0.55);
+  // One target color per LED-backed screen, assigned in build order (TV
+  // first, then each monitor): warm white leads as the primary color, with
+  // the red/green accents following on the other strips. If more LED
+  // strips exist than colors listed here, it cycles back to warm white.
+  const ledChristmasTargets = [ledWarmWhite, ledSoftGreen, ledSoftRed];
   const ledLerpColor = new THREE.Color();
 
-  // Green glow-map wash for the soft halo bloomed onto the wall behind
-  // each panel — the same role orangeGlowTex plays for Halloween, built
-  // locally so nothing shared is touched. Matches the LED strips' own
-  // green rather than reading as a plain white wash.
-  function christmasGlowTexture(){
+  // Matching glow-map washes for the soft halo bloomed onto the wall
+  // behind each panel — the same role orangeGlowTex plays for Halloween,
+  // built locally so nothing shared is touched. One per palette color, so
+  // each panel's wall-wash matches its own LED strip's color rather than
+  // all panels sharing a single green wash.
+  function christmasGlowTexture(rgb){
     const c = document.createElement('canvas'); c.width=c.height=256;
     const ctx = c.getContext('2d');
     const grad = ctx.createRadialGradient(128,128,0,128,128,128);
-    grad.addColorStop(0,   'rgba(76,167,80,0.55)');
-    grad.addColorStop(0.45,'rgba(46,125,50,0.28)');
-    grad.addColorStop(1,   'rgba(46,125,50,0)');
+    grad.addColorStop(0,   `rgba(${rgb},0.55)`);
+    grad.addColorStop(0.45,`rgba(${rgb},0.28)`);
+    grad.addColorStop(1,   `rgba(${rgb},0)`);
     ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
     return new THREE.CanvasTexture(c);
   }
-  const christmasGlowTex = christmasGlowTexture();
+  const christmasGlowTexByRole = [
+    christmasGlowTexture('255,223,176'), // warm white
+    christmasGlowTexture('92,163,96'),   // soft green
+    christmasGlowTexture('214,116,104')  // soft red
+  ];
 
-  // Swaps the TV + monitor LED backlight strips' glow-map shape to the
-  // green Christmas wash (or back to resting purple). Mirrors the
+  // Swaps the TV + monitor LED backlight strips' glow-map shape to their
+  // own palette color's wash (or back to resting purple). Mirrors the
   // Halloween toggle's setScreenLedTexture, only touching refs that have
-  // a .led point light, same as there.
+  // a .led point light, same as there, and steps through the same
+  // build-order index as applyScreenLedColorChristmas below so each panel
+  // gets the wash matching its own LED color.
   function setScreenLedTextureChristmas(on){
     const ctx = window.__roomDayNight;
     if(!ctx || !ctx.screenGlowRefs) return;
-    const tex = on ? christmasGlowTex : ctx.purpleGlowTex;
+    let ledIdx = 0;
     for(let i=0;i<ctx.screenGlowRefs.length;i++){
       const ref = ctx.screenGlowRefs[i];
       if(!ref || !ref.led) continue;
+      const tex = on ? christmasGlowTexByRole[ledIdx % christmasGlowTexByRole.length] : ctx.purpleGlowTex;
       if(ref.glowMat && tex){
         ref.glowMat.map = tex;
         ref.glowMat.needsUpdate = true;
       }
+      ledIdx++;
     }
   }
 
-  // Eases each LED strip's actual light color from purple to the festive
-  // green target, given the same 0..1 progress used for the window's
-  // opacity fade, so the lights arrive exactly when the Christmas scene
-  // finishes fading in.
+  // Eases each LED strip's actual light color from purple to its own
+  // palette target (warm white, soft green, or soft red — see
+  // ledChristmasTargets above), given the same 0..1 progress used for the
+  // window's opacity fade, so the lights arrive exactly when the Christmas
+  // scene finishes fading in.
   function applyScreenLedColorChristmas(e){
     const ctx = window.__roomDayNight;
     if(!ctx || !ctx.screenGlowRefs) return;
+    let ledIdx = 0;
     for(let i=0;i<ctx.screenGlowRefs.length;i++){
       const ref = ctx.screenGlowRefs[i];
       if(!ref || !ref.led) continue;
-      ledLerpColor.copy(ledPurpleColor).lerp(ledChristmasGreen, e);
+      const target = ledChristmasTargets[ledIdx % ledChristmasTargets.length];
+      ledLerpColor.copy(ledPurpleColor).lerp(target, e);
       ref.led.color.copy(ledLerpColor);
       if(ref.spill) ref.spill.color.copy(ledLerpColor);
+      ledIdx++;
     }
   }
 
