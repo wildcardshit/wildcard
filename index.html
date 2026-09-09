@@ -9354,8 +9354,18 @@
 // requestAnimationFrame loop, and never reads or writes sunFactor, the
 // room's lighting. No other effect is attached to it.
 (function(){
+  // Theme setting: "normal" keeps Halloween completely inactive (button
+  // hidden, no listeners attached, nothing else in this file touched).
+  // "halloween" runs the existing Halloween behavior exactly as before.
+  const currentTheme = "normal";
+
   const btn = document.getElementById('halloweenToggleBtn');
   if(!btn) return;
+
+  if(currentTheme !== "halloween"){
+    btn.style.display = 'none';
+    return;
+  }
 
   let isHalloween = false;
   window.__halloweenActive = false;
