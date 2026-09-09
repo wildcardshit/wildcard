@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9603,10 +9603,14 @@ window.currentTheme = "christmas";
 // built based on window.currentTheme (see the window setup earlier in the
 // file). The day/night crossfade between those two photos keeps working
 // automatically: it's driven by generic code in the main render loop that
-// isn't specific to either theme. This script never touches LEDs, the
-// pumpkin glow light/beam, or the leaf rain — those stay off for Christmas
-// (guarded by currentTheme checks at their own call sites) until they get
-// their own Christmas-appropriate versions (snow, etc.) later.
+// isn't specific to either theme.
+//
+// It also eases the TV + monitor LED backlight strips over to festive
+// red/green, using the same texture-swap + per-frame color-lerp mechanism
+// as the Halloween toggle's purple->orange LEDs — just with its own
+// colors/texture defined locally here, so window.__roomDayNight's shared
+// purpleGlowTex/orangeGlowTex and the Halloween script's own colors are
+// completely untouched. No snow, or anything else, is wired up yet.
 (function(){
   // Theme setting (shared with window.currentTheme, set near the top of the
   // file): "normal" and "halloween" keep this button hidden and completely
@@ -9625,6 +9629,70 @@ window.currentTheme = "christmas";
   window.__christmasActive = false;
   let fadeAnim = null; // { from, to, start, dur }
 
+  // Purple (resting) plus festive red/green target colors for the TV +
+  // monitor LED backlight strips. Each strip alternates between red and
+  // green (see applyChristmasLedColor below) and both are nudged slightly
+  // toward a warm white so they read as a cozy accent rather than pure,
+  // saturated stage-light colors.
+  const ledPurpleColor = new THREE.Color(0x2e0854);
+  const warmWhite = new THREE.Color(0xfff0d9);
+  const ledChristmasRed = new THREE.Color(0xe63946).lerp(warmWhite, 0.18);
+  const ledChristmasGreen = new THREE.Color(0x2e7d32).lerp(warmWhite, 0.18);
+  const ledLerpColor = new THREE.Color();
+
+  // Warm-white glow-map wash for the soft halo bloomed onto the wall
+  // behind each panel — the same role orangeGlowTex plays for Halloween,
+  // built locally so nothing shared is touched.
+  function christmasGlowTexture(){
+    const c = document.createElement('canvas'); c.width=c.height=256;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+    grad.addColorStop(0,   'rgba(255,244,214,0.55)');
+    grad.addColorStop(0.45,'rgba(255,224,170,0.28)');
+    grad.addColorStop(1,   'rgba(255,224,170,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  const christmasGlowTex = christmasGlowTexture();
+
+  // Swaps the TV + monitor LED backlight strips' glow-map shape to the
+  // warm-white Christmas wash (or back to resting purple). Mirrors the
+  // Halloween toggle's setScreenLedTexture, only touching refs that have
+  // a .led point light, same as there.
+  function setScreenLedTextureChristmas(on){
+    const ctx = window.__roomDayNight;
+    if(!ctx || !ctx.screenGlowRefs) return;
+    const tex = on ? christmasGlowTex : ctx.purpleGlowTex;
+    for(let i=0;i<ctx.screenGlowRefs.length;i++){
+      const ref = ctx.screenGlowRefs[i];
+      if(!ref || !ref.led) continue;
+      if(ref.glowMat && tex){
+        ref.glowMat.map = tex;
+        ref.glowMat.needsUpdate = true;
+      }
+    }
+  }
+
+  // Eases each LED strip's actual light color between purple and its own
+  // festive target — alternating red/green strip by strip (TV, then each
+  // monitor, in the order they were created) — given the same 0..1
+  // progress used for the window's opacity fade, so the lights arrive
+  // exactly when the Christmas scene finishes fading in.
+  function applyScreenLedColorChristmas(e){
+    const ctx = window.__roomDayNight;
+    if(!ctx || !ctx.screenGlowRefs) return;
+    let ledIndex = 0;
+    for(let i=0;i<ctx.screenGlowRefs.length;i++){
+      const ref = ctx.screenGlowRefs[i];
+      if(!ref || !ref.led) continue;
+      const target = (ledIndex % 2 === 0) ? ledChristmasRed : ledChristmasGreen;
+      ledLerpColor.copy(ledPurpleColor).lerp(target, e);
+      ref.led.color.copy(ledLerpColor);
+      if(ref.spill) ref.spill.color.copy(ledLerpColor);
+      ledIndex++;
+    }
+  }
+
   function stepFade(now){
     const anim = fadeAnim;
     const ctx = window.__roomDayNight;
@@ -9632,6 +9700,9 @@ window.currentTheme = "christmas";
     const t = Math.min(1, (now - anim.start) / anim.dur);
     const e = t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; // easeInOutCubic
     ctx.windowScene.halloweenMat.opacity = anim.from + (anim.to - anim.from) * e;
+    // LED color eases using the same progress and direction as the window
+    // scene fade, so both land together.
+    applyScreenLedColorChristmas(anim.to > anim.from ? e : 1 - e);
     if(t >= 1){
       fadeAnim = null;
       return;
@@ -9641,9 +9712,11 @@ window.currentTheme = "christmas";
 
   function setChristmas(on){
     const ctx = window.__roomDayNight;
+    setScreenLedTextureChristmas(on);
     if(!ctx || !ctx.windowScene || !ctx.windowScene.halloweenMat){
       isChristmas = on;
       btn.classList.toggle('active', on);
+      applyScreenLedColorChristmas(on ? 1 : 0);
       return;
     }
     const from = ctx.windowScene.halloweenMat.opacity;
