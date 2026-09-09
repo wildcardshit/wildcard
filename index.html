@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -1096,6 +1096,56 @@ window.currentTheme = "christmas";
   const H = 11 * FT;   // height (y)
 
   const halfW = W/2, halfL = L/2;
+
+  // ---------- Shared helpers for the Christmas string-light strands ----------
+  // (ceiling perimeter, window frame/mullions, desk legs — all three built
+  // further down reuse these so the "hand-installed" look is consistent
+  // across every strand.) Kept here, in the outer scope, so every nested
+  // build function below can close over them.
+  //
+  // Returns `count` monotonically-increasing t-values from 0 to 1 with the
+  // endpoints pinned (so a strand's start/end — e.g. a room corner — never
+  // moves) but the interior spacing nudged slightly off-grid, so bulbs read
+  // as strung up by hand rather than plotted on a perfect ruler. The jitter
+  // is small relative to the average gap and the array is sorted afterward,
+  // so bulbs never bunch up, cross, or reverse order.
+  function xmasJitteredT(count, jitterAmt){
+    if(jitterAmt === undefined) jitterAmt = 0.32;
+    if(count <= 1) return [0];
+    if(count === 2) return [0, 1];
+    const arr = [0];
+    const span = 1/(count-1);
+    for(let i=1;i<count-1;i++){
+      const base = i*span;
+      arr.push(base + (Math.random()*2-1) * span * jitterAmt);
+    }
+    arr.push(1);
+    arr.sort((a,b)=>a-b);
+    return arr;
+  }
+  // A fixed (not animated) per-bulb brightness multiplier so individual
+  // bulbs in a strand read as slightly different wattages/ages, the way a
+  // real strand does — rolled once at build time and reused every frame,
+  // rather than flickering.
+  function xmasBulbBrightness(){
+    return 0.8 + Math.random() * 0.4; // ~0.80 - 1.20
+  }
+  // A small, crisp "filament" texture for the bright emissive center of
+  // each bulb — tighter and hotter than the soft halo texture, so each
+  // bulb reads as having an actual bright point at its core rather than
+  // being one uniformly-lit blob.
+  function makeXmasBulbCoreTexture(){
+    const s = 32;
+    const c = document.createElement('canvas'); c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.75)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+    return new THREE.CanvasTexture(c);
+  }
 
   // ---------- Card texture images (embedded, resized/compressed) ----------
   const CARD_IMG = {
@@ -2050,6 +2100,11 @@ window.currentTheme = "christmas";
       { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
     ];
     const ceilBulbGlowTex = makeCeilBulbGlowTexture();
+    const ceilBulbCoreTex = makeXmasBulbCoreTexture();
+    // Lighter, whiter-hot tint for each color's bright core sprite — real
+    // colored bulbs still show a near-white hotspot right at the emitter,
+    // with the full color only reading in the glass/halo around it.
+    const ceilBulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
     const ceilBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
     const ceilBulbMats = ceilBulbColors.map(c => new THREE.MeshStandardMaterial({
       color: c.color, emissive: c.emissive, emissiveIntensity: 0,
@@ -2060,14 +2115,18 @@ window.currentTheme = "christmas";
       map: ceilBulbGlowTex, color: c.emissive, transparent: true,
       opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
     }));
-    ceilingChristmasLights = { bulbMats: ceilBulbMats, bulbGlowMats: ceilBulbGlowMats, pointLights: [] };
+    const ceilBulbCoreMats = ceilBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: ceilBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    ceilingChristmasLights = { bulbMats: ceilBulbMats, bulbGlowMats: ceilBulbGlowMats, bulbCoreMats: ceilBulbCoreMats, pointLights: [] };
 
     // One continuous loop tracing the four ceiling/wall seams, corner to
     // corner, so the strand looks physically run around the room rather
     // than four independent segments. Order: back wall (-z) left->right,
     // right wall (+x) back->front, front/south wall (+z) right->left,
     // left wall (-x) front->back, closing the loop.
-    const ceilBulbSpacing = 0.22; // even spacing along the strand, meters
+    const ceilBulbSpacing = 0.22; // average spacing along the strand, meters
     const ceilSegments = [
       { x0: -clx, z0: -clz, x1: clx,  z1: -clz }, // back wall seam
       { x0: clx,  z0: -clz, x1: clx,  z1: clz  }, // right wall seam
@@ -2079,8 +2138,12 @@ window.currentTheme = "christmas";
     ceilSegments.forEach(seg => {
       const segLen = Math.hypot(seg.x1 - seg.x0, seg.z1 - seg.z0);
       const count = Math.max(2, Math.round(segLen / ceilBulbSpacing));
+      // Slightly irregular spacing (endpoints pinned to the true corners)
+      // so bulbs don't land on a perfectly even grid, like a strand that
+      // was actually run by hand along the seam.
+      const tArr = xmasJitteredT(count, 0.3);
       for(let i=0;i<count;i++){
-        const tt = i/(count-1);
+        const tt = tArr[i];
         const x = seg.x0 + (seg.x1 - seg.x0) * tt;
         const z = seg.z0 + (seg.z1 - seg.z0) * tt;
         // No sag: the strand runs perfectly flush along the wall/ceiling
@@ -2090,29 +2153,45 @@ window.currentTheme = "christmas";
 
         const ci = colorIdx % ceilBulbColors.length;
         colorIdx++;
+        // Fixed (not animated) per-bulb brightness roll, expressed as a
+        // small size difference across the bulb/halo/core so the strand
+        // reads as individually-wattage'd bulbs rather than clones —
+        // without needing a unique material (and material write) per bulb.
+        const bright = xmasBulbBrightness();
         const bulb = new THREE.Mesh(ceilBulbGeo, ceilBulbMats[ci]);
         bulb.position.set(x, y, z);
+        bulb.scale.setScalar(0.85 + bright*0.2);
         room.add(bulb);
         const glow = new THREE.Sprite(ceilBulbGlowMats[ci]);
-        glow.scale.set(0.062, 0.062, 1);
+        glow.scale.set(0.05*bright, 0.05*bright, 1);
         glow.position.set(x, y, z);
         room.add(glow);
+        const core = new THREE.Sprite(ceilBulbCoreMats[ci]);
+        core.scale.set(0.016*bright, 0.016*bright, 1);
+        core.position.set(x, y, z);
+        room.add(core);
       }
     });
 
-    // A handful of soft, low-intensity point lights spaced around the
-    // loop (one roughly mid-wall per side) so the strand casts a faint
-    // warm wash onto the nearby ceiling and upper walls, rather than only
-    // reading as glowing sprites. Short falloff distance keeps each pool
+    // Soft, low-intensity point lights spaced around the loop so the
+    // strand casts a faint warm wash onto the nearby ceiling and upper
+    // walls, rather than only reading as glowing sprites — two per wall
+    // (at roughly the quarter-points) rather than one dead-center, so the
+    // spill reads as coming from the strand's actual bulbs along its
+    // length instead of one bright hotspot per wall. Short falloff
+    // distance (physically-correct inverse-square decay) keeps each pool
     // small and cozy instead of washing out the room.
-    const ceilLightPositions = [
-      { x: 0,    z: -clz },
-      { x: clx,  z: 0    },
-      { x: 0,    z: clz  },
-      { x: -clx, z: 0    }
-    ];
+    const ceilLightPositions = [];
+    ceilSegments.forEach(seg => {
+      [0.25, 0.75].forEach(t => {
+        ceilLightPositions.push({
+          x: seg.x0 + (seg.x1 - seg.x0) * t,
+          z: seg.z0 + (seg.z1 - seg.z0) * t
+        });
+      });
+    });
     ceilLightPositions.forEach(p => {
-      const pl = new THREE.PointLight(0xffdca0, 0, 2.0, 2.0);
+      const pl = new THREE.PointLight(0xffdca0, 0, 1.5, 2.0);
       pl.position.set(p.x, ceilLightY, p.z);
       room.add(pl);
       ceilingChristmasLights.pointLights.push(pl);
@@ -4490,6 +4569,8 @@ window.currentTheme = "christmas";
       { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
     ];
     const winBulbGlowTex = makeWinBulbGlowTexture();
+    const winBulbCoreTex = makeXmasBulbCoreTexture();
+    const winBulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
     const winBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
     const winBulbMats = winBulbColors.map(c => new THREE.MeshStandardMaterial({
       color: c.color, emissive: c.emissive, emissiveIntensity: 0,
@@ -4500,7 +4581,11 @@ window.currentTheme = "christmas";
       map: winBulbGlowTex, color: c.emissive, transparent: true,
       opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
     }));
-    windowFrameChristmasLights = { bulbMats: winBulbMats, bulbGlowMats: winBulbGlowMats, pointLights: [] };
+    const winBulbCoreMats = winBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: winBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    windowFrameChristmasLights = { bulbMats: winBulbMats, bulbGlowMats: winBulbGlowMats, bulbCoreMats: winBulbCoreMats, pointLights: [] };
 
     // Outer edge of the physical frame (matches the outer-frame `bar()`
     // calls above: half-extent = half the opening plus half the frame
@@ -4511,7 +4596,7 @@ window.currentTheme = "christmas";
     const winOuterHalfH = winH/2 + frameThick/2;
     const winLightZ = frameDepth + 0.014;
 
-    const winBulbSpacing = 0.16; // even spacing along the strand, meters
+    const winBulbSpacing = 0.16; // average spacing along the strand, meters
     const winSegments = [
       { x0: -winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1:  winOuterHalfH }, // top
       { x0:  winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1: -winOuterHalfH }, // right
@@ -4523,32 +4608,45 @@ window.currentTheme = "christmas";
     winSegments.forEach(seg => {
       const segLen = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
       const count = Math.max(2, Math.round(segLen / winBulbSpacing));
+      // Slightly irregular spacing (endpoints pinned to the true corners)
+      // instead of a perfectly even grid.
+      const tArr = xmasJitteredT(count, 0.3);
       for(let i=0;i<count;i++){
-        const tt = i/(count-1);
+        const tt = tArr[i];
         const x = seg.x0 + (seg.x1 - seg.x0) * tt;
         const y = seg.y0 + (seg.y1 - seg.y0) * tt;
 
         const ci = winColorIdx % winBulbColors.length;
         winColorIdx++;
+        const bright = xmasBulbBrightness();
         const bulb = new THREE.Mesh(winBulbGeo, winBulbMats[ci]);
         bulb.position.set(x, y, winLightZ);
+        bulb.scale.setScalar(0.85 + bright*0.2);
         windowGroup.add(bulb);
         const glow = new THREE.Sprite(winBulbGlowMats[ci]);
-        glow.scale.set(0.052, 0.052, 1);
+        glow.scale.set(0.042*bright, 0.042*bright, 1);
         glow.position.set(x, y, winLightZ);
         windowGroup.add(glow);
+        const core = new THREE.Sprite(winBulbCoreMats[ci]);
+        core.scale.set(0.015*bright, 0.015*bright, 1);
+        core.position.set(x, y, winLightZ);
+        windowGroup.add(core);
       }
     });
 
-    // A couple of soft, low point lights (top and bottom mid-span) so the
-    // strand casts the faintest warm touch onto the frame/nearby wall,
-    // without competing with the window's own scene lighting.
+    // A few soft, low point lights around the frame so the strand casts
+    // the faintest warm touch onto the frame/nearby wall (top, bottom, and
+    // both sides now, instead of only top/bottom), without competing with
+    // the window's own scene lighting. Physically-correct falloff (decay
+    // 2.0) keeps each pool small.
     const winLightPositions = [
       { x: 0, y:  winOuterHalfH },
-      { x: 0, y: -winOuterHalfH }
+      { x: 0, y: -winOuterHalfH },
+      { x:  winOuterHalfW, y: 0 },
+      { x: -winOuterHalfW, y: 0 }
     ];
     winLightPositions.forEach(p => {
-      const pl = new THREE.PointLight(0xffdca0, 0, 1.2, 2.0);
+      const pl = new THREE.PointLight(0xffdca0, 0, 0.9, 2.0);
       pl.position.set(p.x, p.y, winLightZ);
       windowGroup.add(pl);
       windowFrameChristmasLights.pointLights.push(pl);
@@ -4571,8 +4669,13 @@ window.currentTheme = "christmas";
       map: winBulbGlowTex, color: c.emissive, transparent: true,
       opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
     }));
+    const winMullionCoreMats = winBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: winBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
     windowFrameChristmasLights.mullionBulbMats = winMullionBulbMats;
     windowFrameChristmasLights.mullionGlowMats = winMullionGlowMats;
+    windowFrameChristmasLights.mullionCoreMats = winMullionCoreMats;
 
     // Just proud of each mullion's own front face (mullions are centered
     // at frameDepth/2 - 0.005 with depth mDepth, so their front face sits
@@ -4583,23 +4686,29 @@ window.currentTheme = "christmas";
       points.forEach(pt => {
         const ci = mullionColorIdx % winBulbColors.length;
         mullionColorIdx++;
+        const bright = xmasBulbBrightness();
         const bulb = new THREE.Mesh(winMullionBulbGeo, winMullionBulbMats[ci]);
         bulb.position.set(pt.x, pt.y, mullionLightZ);
+        bulb.scale.setScalar(0.85 + bright*0.2);
         windowGroup.add(bulb);
         const glow = new THREE.Sprite(winMullionGlowMats[ci]);
-        glow.scale.set(0.045, 0.045, 1);
+        glow.scale.set(0.036*bright, 0.036*bright, 1);
         glow.position.set(pt.x, pt.y, mullionLightZ);
         windowGroup.add(glow);
+        const core = new THREE.Sprite(winMullionCoreMats[ci]);
+        core.scale.set(0.013*bright, 0.013*bright, 1);
+        core.position.set(pt.x, pt.y, mullionLightZ);
+        windowGroup.add(core);
       });
     }
     // Vertical mullions (cols-1 of them) run the window's full height.
     for(let c=1; c<cols; c++){
       const mx = -winW/2 + (winW/cols)*c;
       const count = Math.max(2, Math.round(winH / winBulbSpacing));
+      const tArr = xmasJitteredT(count, 0.3);
       const pts = [];
       for(let i=0;i<count;i++){
-        const tt = i/(count-1);
-        pts.push({ x: mx, y: -winH/2 + winH*tt });
+        pts.push({ x: mx, y: -winH/2 + winH*tArr[i] });
       }
       placeMullionBulbs(pts);
     }
@@ -4607,10 +4716,10 @@ window.currentTheme = "christmas";
     for(let r=1; r<rows; r++){
       const my = -winH/2 + (winH/rows)*r;
       const count = Math.max(2, Math.round(winW / winBulbSpacing));
+      const tArr = xmasJitteredT(count, 0.3);
       const pts = [];
       for(let i=0;i<count;i++){
-        const tt = i/(count-1);
-        pts.push({ x: -winW/2 + winW*tt, y: my });
+        pts.push({ x: -winW/2 + winW*tArr[i], y: my });
       }
       placeMullionBulbs(pts);
     }
@@ -5042,6 +5151,8 @@ window.currentTheme = "christmas";
       return new THREE.CanvasTexture(c);
     }
     const bulbGlowTex = makeBulbGlowTexture();
+    const bulbCoreTex = makeXmasBulbCoreTexture();
+    const bulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
     const bulbColors = [
       { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
       { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
@@ -5057,34 +5168,50 @@ window.currentTheme = "christmas";
       map: bulbGlowTex, color: c.emissive, transparent: true,
       opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
     }));
-    deskChristmasLights = { bulbMats, bulbGlowMats, pointLights: [] };
+    const bulbCoreMats = bulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: bulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    deskChristmasLights = { bulbMats, bulbGlowMats, bulbCoreMats, pointLights: [] };
 
-    // Places one small bulb + matching soft halo sprite at each point along
-    // a pre-computed coil path, cycling red -> green -> warm-white so the
-    // strand reads as a continuous, evenly-spaced string rather than random
-    // scatter. `colorStart` lets successive segments (front leg -> stretcher
-    // -> back leg) continue the same color cycle instead of each resetting.
+    // Places one small bulb + matching soft halo sprite + tiny bright core
+    // sprite at each point along a pre-computed coil path, cycling
+    // red -> green -> warm-white so the strand reads as a continuous
+    // string rather than random scatter. `colorStart` lets successive
+    // segments (front leg -> stretcher -> back leg) continue the same
+    // color cycle instead of each resetting. Each bulb also gets a small,
+    // fixed (non-animated) brightness roll expressed as a size nudge
+    // across all three parts, so the coil doesn't read as identical clones.
     function placeBulbsAlongPath(points, colorStart){
       for(let i=0;i<points.length;i++){
         const ci = (colorStart + i) % bulbColors.length;
+        const bright = xmasBulbBrightness();
         const bulb = new THREE.Mesh(bulbGeo, bulbMats[ci]);
         bulb.position.copy(points[i]);
+        bulb.scale.setScalar(0.85 + bright*0.2);
         setup.add(bulb);
         const glow = new THREE.Sprite(bulbGlowMats[ci]);
-        glow.scale.set(0.028, 0.028, 1);
+        glow.scale.set(0.024*bright, 0.024*bright, 1);
         glow.position.copy(points[i]);
         setup.add(glow);
+        const core = new THREE.Sprite(bulbCoreMats[ci]);
+        core.scale.set(0.010*bright, 0.010*bright, 1);
+        core.position.copy(points[i]);
+        setup.add(core);
       }
       return points.length;
     }
 
     // A vertical helix wound around a leg cylinder, from just above the
     // floor to just under the desktop's underside (leaving a gap so bulbs
-    // never poke through the desktop).
+    // never poke through the desktop). Spacing along the helix is jittered
+    // slightly (endpoints pinned) so the winds don't land at perfectly
+    // even intervals, the way a hand-wrapped strand wouldn't.
     function verticalWrapPoints(x, z, yStart, yEnd, turns, radius, count){
       const pts = [];
+      const tArr = xmasJitteredT(count, 0.22);
       for(let i=0;i<count;i++){
-        const tt = count > 1 ? i/(count-1) : 0;
+        const tt = tArr[i];
         const y = yStart + (yEnd - yStart) * tt;
         const ang = tt * Math.PI * 2 * turns;
         pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y, z + Math.sin(ang)*radius));
@@ -5094,8 +5221,9 @@ window.currentTheme = "christmas";
     // A horizontal helix wound around the stretcher bar joining the two legs.
     function horizontalWrapPoints(x, y, zStart, zEnd, turns, radius, count){
       const pts = [];
+      const tArr = xmasJitteredT(count, 0.22);
       for(let i=0;i<count;i++){
-        const tt = count > 1 ? i/(count-1) : 0;
+        const tt = tArr[i];
         const z = zStart + (zEnd - zStart) * tt;
         const ang = tt * Math.PI * 2 * turns;
         pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y + Math.sin(ang)*radius, z));
@@ -5117,17 +5245,21 @@ window.currentTheme = "christmas";
       colorIdx += placeBulbsAlongPath(backPts, colorIdx);
     });
 
-    // A couple of low, soft point lights (one per leg pair) so the strand
-    // actually casts a little warm light onto the nearby legs and floor,
-    // rather than only reading as glowing sprites. Kept to just two lights
-    // total, positioned low near the densest part of each coil, with a
-    // short falloff distance so the effect stays a subtle cozy pool rather
-    // than washing out the room.
+    // Low, soft point lights (two per leg pair — one near the floor, one
+    // near the top of the coil, instead of just one) so the strand casts
+    // a little warm light onto the nearby legs and floor across more of
+    // its height, rather than only reading as glowing sprites. Short,
+    // physically-correct falloff distance keeps each pool a subtle, cozy
+    // wash rather than washing out the room.
     [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
-      const pl = new THREE.PointLight(0xffdca0, 0, 0.7, 2.0);
-      pl.position.set(xSide, 0.18, deskD/2);
-      setup.add(pl);
-      deskChristmasLights.pointLights.push(pl);
+      const plLow = new THREE.PointLight(0xffdca0, 0, 0.6, 2.0);
+      plLow.position.set(xSide, 0.14, deskD/2);
+      setup.add(plLow);
+      deskChristmasLights.pointLights.push(plLow);
+      const plHigh = new THREE.PointLight(0xffdca0, 0, 0.6, 2.0);
+      plHigh.position.set(xSide, wrapYEnd - 0.1, deskD - 0.06);
+      setup.add(plHigh);
+      deskChristmasLights.pointLights.push(plHigh);
     });
 
 
@@ -9743,82 +9875,101 @@ window.currentTheme = "christmas";
     }
 
     // Christmas string lights wrapped around the desk legs: every bulb of a
-    // given color shares one material (same for the halo sprites), so
-    // fading the whole strand in/out — and giving it a faint, cozy shimmer,
-    // like a real strand on household AC current — is a handful of writes
-    // per frame rather than one per bulb. Gated to currentTheme ===
-    // "christmas" and driven by the same opacity the Christmas toggle
-    // already animates for the window photo, so the strand arrives and
-    // leaves in lockstep with everything else the toggle controls.
+    // given color shares one material (same for the halo/core sprites), so
+    // fading the whole strand in/out is a handful of writes per frame, not
+    // one per bulb. Gated to currentTheme === "christmas" and driven by the
+    // same opacity the Christmas toggle already animates for the window
+    // photo, so the strand arrives and leaves in lockstep with everything
+    // else the toggle controls. Held at a fixed, steady brightness once lit
+    // — no flicker/shimmer over time — with the individual bulb-to-bulb
+    // brightness variation instead baked into each bulb's size at build
+    // time (see xmasBulbBrightness above).
     if(deskChristmasLights){
       const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
-      const shimmer = 0.94 + Math.sin(t*1.3)*0.04 + Math.sin(t*3.7)*0.02;
       for(let i=0;i<deskChristmasLights.bulbMats.length;i++){
         const m = deskChristmasLights.bulbMats[i];
         m.opacity = xmasOn;
-        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+        m.emissiveIntensity = xmasOn * 1.15;
       }
       for(let i=0;i<deskChristmasLights.bulbGlowMats.length;i++){
-        deskChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.85 * shimmer;
+        deskChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.7;
+      }
+      if(deskChristmasLights.bulbCoreMats){
+        for(let i=0;i<deskChristmasLights.bulbCoreMats.length;i++){
+          deskChristmasLights.bulbCoreMats[i].opacity = xmasOn * 0.95;
+        }
       }
       for(let i=0;i<deskChristmasLights.pointLights.length;i++){
-        deskChristmasLights.pointLights[i].intensity = xmasOn * 0.35 * shimmer;
+        deskChristmasLights.pointLights[i].intensity = xmasOn * 0.2;
       }
     }
 
     // Christmas string lights run around the ceiling perimeter: same
-    // shared-material fade/shimmer approach as the desk strand above, so
-    // the whole loop arrives and leaves in lockstep with the rest of the
-    // Christmas toggle's effects. Brightness multipliers here are dialed
-    // up noticeably higher than the desk strand's since this loop needs
-    // to read clearly from across the whole room, not just illuminate a
-    // pair of legs up close.
+    // shared-material fade approach as the desk strand above, held steady
+    // (no shimmer) once lit, so the whole loop arrives and leaves in
+    // lockstep with the rest of the Christmas toggle's effects. Brightness
+    // multipliers here are dialed up noticeably higher than the desk
+    // strand's since this loop needs to read clearly from across the whole
+    // room, not just illuminate a pair of legs up close.
     if(ceilingChristmasLights){
       const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
-      const shimmer = 0.94 + Math.sin(t*1.3 + 1.7)*0.04 + Math.sin(t*3.7 + 0.6)*0.02;
       for(let i=0;i<ceilingChristmasLights.bulbMats.length;i++){
         const m = ceilingChristmasLights.bulbMats[i];
         m.opacity = xmasOn;
-        m.emissiveIntensity = xmasOn * 1.9 * shimmer;
+        m.emissiveIntensity = xmasOn * 2.0;
       }
       for(let i=0;i<ceilingChristmasLights.bulbGlowMats.length;i++){
-        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 1.0 * shimmer;
+        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.85;
+      }
+      if(ceilingChristmasLights.bulbCoreMats){
+        for(let i=0;i<ceilingChristmasLights.bulbCoreMats.length;i++){
+          ceilingChristmasLights.bulbCoreMats[i].opacity = xmasOn;
+        }
       }
       for(let i=0;i<ceilingChristmasLights.pointLights.length;i++){
-        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.42 * shimmer;
+        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.22;
       }
     }
 
     // Christmas string lights wrapped around the window's outer frame:
-    // same shared-material fade/shimmer approach as the other strands,
-    // kept at moderate (not boosted) brightness since it sits right next
-    // to the window scene's own lighting and only needs a subtle,
-    // individually-glowing accent along the trim.
+    // same shared-material fade approach as the other strands, held steady
+    // once lit, kept at moderate (not boosted) brightness since it sits
+    // right next to the window scene's own lighting and only needs a
+    // subtle, individually-glowing accent along the trim.
     if(windowFrameChristmasLights){
       const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
-      const shimmer = 0.94 + Math.sin(t*1.3 + 3.1)*0.04 + Math.sin(t*3.7 + 2.0)*0.02;
       for(let i=0;i<windowFrameChristmasLights.bulbMats.length;i++){
         const m = windowFrameChristmasLights.bulbMats[i];
         m.opacity = xmasOn;
-        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+        m.emissiveIntensity = xmasOn * 1.15;
       }
       for(let i=0;i<windowFrameChristmasLights.bulbGlowMats.length;i++){
-        windowFrameChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.8 * shimmer;
+        windowFrameChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.65;
+      }
+      if(windowFrameChristmasLights.bulbCoreMats){
+        for(let i=0;i<windowFrameChristmasLights.bulbCoreMats.length;i++){
+          windowFrameChristmasLights.bulbCoreMats[i].opacity = xmasOn * 0.95;
+        }
       }
       for(let i=0;i<windowFrameChristmasLights.pointLights.length;i++){
-        windowFrameChristmasLights.pointLights[i].intensity = xmasOn * 0.18 * shimmer;
+        windowFrameChristmasLights.pointLights[i].intensity = xmasOn * 0.1;
       }
-      // Interior mullion strand: same fade/shimmer, but dialed down a
-      // notch below the outer frame so the window reads as accented along
-      // its trim rather than uniformly, overly lit across its whole face.
+      // Interior mullion strand: same fade, but dialed down a notch below
+      // the outer frame so the window reads as accented along its trim
+      // rather than uniformly, overly lit across its whole face.
       if(windowFrameChristmasLights.mullionBulbMats){
         for(let i=0;i<windowFrameChristmasLights.mullionBulbMats.length;i++){
           const m = windowFrameChristmasLights.mullionBulbMats[i];
           m.opacity = xmasOn;
-          m.emissiveIntensity = xmasOn * 0.65 * shimmer;
+          m.emissiveIntensity = xmasOn * 0.7;
         }
         for(let i=0;i<windowFrameChristmasLights.mullionGlowMats.length;i++){
-          windowFrameChristmasLights.mullionGlowMats[i].opacity = xmasOn * 0.5 * shimmer;
+          windowFrameChristmasLights.mullionGlowMats[i].opacity = xmasOn * 0.4;
+        }
+        if(windowFrameChristmasLights.mullionCoreMats){
+          for(let i=0;i<windowFrameChristmasLights.mullionCoreMats.length;i++){
+            windowFrameChristmasLights.mullionCoreMats[i].opacity = xmasOn * 0.8;
+          }
         }
       }
     }
