@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -7387,57 +7387,136 @@ window.currentTheme = "christmas";
     addContactShadow(room, plantX, plantZ, potR * 1.4, potR * 1.4, 0.34);
 
     // ---------- Christmas tree, standing in the exact same spot ----------
-    // Built at the same (plantX, plantZ) position and kept inside the same
-    // footprint as the plant above (base radius <= potR*1.4), so swapping
-    // the two never touches the room layout. Always present in the scene
-    // — same "build once, toggle visibility" approach used elsewhere —
-    // but starts hidden and is only ever shown by the render loop, gated
-    // to window.currentTheme === "christmas".
+    // Built at the same (plantX, plantZ) position as the plant above, so
+    // swapping the two never touches the room layout. Always present in
+    // the scene — same "build once, toggle visibility" approach used
+    // elsewhere — but starts hidden and is only ever shown by the render
+    // loop, gated to window.currentTheme === "christmas".
+    //
+    // Scaled to stand almost as tall as the window beside it (tip lands
+    // just under the window's own head height, comfortably clear of the
+    // ceiling), and built from jittered/irregular tiers plus scattered
+    // branch-tip foliage blobs — rather than smooth stacked cones — so it
+    // reads as a real bushy pine instead of a plastic toy-store cone tree.
     const treeGroup = new THREE.Group();
 
     // Small stand at the base, standing in for the plant's terracotta pot.
-    const standH = 0.14, standR = potR * 0.9;
+    const standH = 0.16, standR = potR * 1.05;
     const standMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1e, roughness: 0.75, metalness: 0.05 });
-    const stand = new THREE.Mesh(new THREE.CylinderGeometry(standR, standR * 1.08, standH, 16), standMat);
+    const stand = new THREE.Mesh(new THREE.CylinderGeometry(standR, standR * 1.1, standH, 16), standMat);
     stand.position.set(0, standH / 2, 0);
     stand.castShadow = true; stand.receiveShadow = true;
     treeGroup.add(stand);
 
     // Short visible trunk between the stand and the lowest branch tier.
-    const trunkH2 = 0.10;
-    const treeTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, trunkH2, 10), trunkMat);
+    const trunkH2 = 0.14;
+    const treeTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.036, trunkH2, 10), trunkMat);
     treeTrunk.position.set(0, standH + trunkH2 / 2, 0);
     treeTrunk.castShadow = true;
     treeGroup.add(treeTrunk);
 
-    // Layered pine foliage: a stack of tapered cones, each overlapping the
-    // one below it so the silhouette reads as one continuous tree rather
-    // than stacked discs. Two slightly different greens are alternated
-    // per tier for a bit of natural variation, same idea as the plant's
-    // multi-color leaf set above.
-    const pineMatA = new THREE.MeshStandardMaterial({ color: 0x2c5330, roughness: 0.75, metalness: 0.02 });
-    const pineMatB = new THREE.MeshStandardMaterial({ color: 0x35603a, roughness: 0.75, metalness: 0.02 });
+    // Tiny deterministic pseudo-random helper — every irregularity below
+    // uses this instead of Math.random() so the tree looks the same on
+    // every reload/theme-toggle instead of "popping" into a new shape.
+    let treeRandSeed = 7823;
+    function treeRand(){
+      treeRandSeed = (treeRandSeed * 9301 + 49297) % 233280;
+      return treeRandSeed / 233280;
+    }
+
+    // Breaks up a tier cone's perfectly round, plastic-looking silhouette
+    // by nudging each ring vertex's radius in/out slightly at random —
+    // real pine tiers have uneven, gappy, wind-blown edges, never a clean
+    // circle in cross-section.
+    function jitterConeGeometry(geo, amount){
+      const pos = geo.attributes.position;
+      for(let i = 0; i < pos.count; i++){
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+        const r = Math.sqrt(x * x + z * z);
+        if(r < 0.001) continue; // apex/center vertices — leave in place
+        const jitter = 1 + (treeRand() - 0.5) * amount;
+        pos.setX(i, x * jitter);
+        pos.setZ(i, z * jitter);
+      }
+      geo.computeVertexNormals();
+    }
+
+    // Layered pine foliage: a tall stack of tapered, jittered cones, each
+    // overlapping the one below so the silhouette reads as one continuous
+    // tree. Three muted, slightly desaturated greens (rather than two
+    // bright ones) are alternated per tier — closer to real fir/spruce
+    // needle color, which reads darker and duller than a saturated
+    // "Christmas green" under room lighting.
+    const pineMatA = new THREE.MeshStandardMaterial({ color: 0x27431f, roughness: 0.88, metalness: 0.0 });
+    const pineMatB = new THREE.MeshStandardMaterial({ color: 0x35502a, roughness: 0.88, metalness: 0.0 });
+    const pineMatC = new THREE.MeshStandardMaterial({ color: 0x2e4a26, roughness: 0.88, metalness: 0.0 });
+    const pineMats = [pineMatA, pineMatB, pineMatC];
+    // Nine tiers (vs. the old six) tapering from a wide, bushy base to a
+    // narrow tip — sized so the finished tree's apex lands just under the
+    // window's head height, an easy 0.5m of clearance below the ceiling.
     const tierDefs = [
-      { h: 0.50, r: potR * 1.25 },
-      { h: 0.46, r: potR * 1.08 },
-      { h: 0.42, r: potR * 0.90 },
-      { h: 0.38, r: potR * 0.72 },
-      { h: 0.32, r: potR * 0.54 },
-      { h: 0.24, r: potR * 0.34 }
+      { h: 0.62, r: potR * 1.35 },
+      { h: 0.58, r: potR * 1.26 },
+      { h: 0.54, r: potR * 1.15 },
+      { h: 0.50, r: potR * 1.03 },
+      { h: 0.44, r: potR * 0.90 },
+      { h: 0.38, r: potR * 0.75 },
+      { h: 0.32, r: potR * 0.60 },
+      { h: 0.26, r: potR * 0.44 },
+      { h: 0.20, r: potR * 0.28 }
     ];
-    const tierOverlap = 0.38; // fraction of each cone's height buried in the one below
+    const tierOverlap = 0.35; // fraction of each cone's height buried in the one below
     let cursorY = standH + trunkH2;
-    const tierCenters = []; // {y, r} of each tier, used to place ornaments/lights on the surface
+    const tierCenters = []; // {y, r} of each tier, used to place ornaments/lights/blobs
     tierDefs.forEach((td, i) => {
       const coneY = cursorY + td.h / 2;
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(td.r, td.h, 14), (i % 2 === 0) ? pineMatA : pineMatB);
+      // Slightly irregular radial segment count per tier (avoids every
+      // tier looking like a copy-pasted stamp of the last) and a small
+      // random yaw so the jittered "dents" don't line up vertically.
+      const segs = 11 + (i % 3);
+      const coneGeo = new THREE.ConeGeometry(td.r, td.h, segs);
+      jitterConeGeometry(coneGeo, 0.22);
+      const cone = new THREE.Mesh(coneGeo, pineMats[i % 3]);
       cone.position.set(0, coneY, 0);
+      cone.rotation.y = treeRand() * Math.PI * 2;
       cone.castShadow = true; cone.receiveShadow = true;
       treeGroup.add(cone);
       tierCenters.push({ yBase: cursorY, yTop: cursorY + td.h, r: td.r });
       cursorY += td.h * (1 - tierOverlap);
     });
     const treeApexY = cursorY + tierDefs[tierDefs.length - 1].h * tierOverlap; // approx tip height
+
+    // Branch-tip foliage blobs: flattened, slightly cupped clusters (same
+    // technique as the floor plant's leaves above) scattered around each
+    // tier's outer surface, angled outward and drooping slightly downward
+    // like real weighted pine boughs. This is what actually sells the
+    // "real tree" read — the bare jittered cones underneath are just the
+    // silhouette guide, and are mostly hidden once these are added.
+    const tipMatA = new THREE.MeshStandardMaterial({ color: 0x1f3a1a, roughness: 0.85, metalness: 0.0 });
+    const tipMatB = new THREE.MeshStandardMaterial({ color: 0x2f5228, roughness: 0.85, metalness: 0.0 });
+    const tipMatC = new THREE.MeshStandardMaterial({ color: 0x264423, roughness: 0.85, metalness: 0.0 });
+    const tipMats = [tipMatA, tipMatB, tipMatC];
+    let tipSeed = 0;
+    tierCenters.forEach((tier, ti) => {
+      const tierH = tier.yTop - tier.yBase;
+      const perTier = 9 + (ti % 3); // denser near the (wider) base, still full up top
+      for(let i = 0; i < perTier; i++){
+        tipSeed++;
+        const ang = (i / perTier) * Math.PI * 2 + ti * 1.1 + treeRand() * 0.4;
+        const yFrac = 0.15 + treeRand() * 0.75; // scattered up/down this tier's slope
+        const y = tier.yBase + tierH * yFrac;
+        const rAtY = tier.r * (1 - yFrac * 0.85) * (1.02 + treeRand() * 0.12); // just proud of the cone
+        const blobScale = 0.85 + treeRand() * 0.4;
+        const blob = new THREE.Mesh(new THREE.SphereGeometry(0.05 * blobScale, 7, 5), tipMats[tipSeed % 3]);
+        blob.scale.set(1, 0.55, 1.7); // flattened and elongated, like a bough tip, not a berry
+        blob.position.set(Math.cos(ang) * rAtY, y, Math.sin(ang) * rAtY);
+        blob.rotation.y = ang;
+        blob.rotation.x = 0.35 + treeRand() * 0.3; // droop
+        blob.castShadow = true;
+        blob.receiveShadow = true;
+        treeGroup.add(blob);
+      }
+    });
 
     // Ornaments: small red and gold spheres nestled against the foliage
     // surface at varied tiers/angles, sized and spaced sparsely so they
@@ -7447,7 +7526,7 @@ window.currentTheme = "christmas";
     const ornamentGeo = new THREE.SphereGeometry(0.018, 8, 6);
     let ornColorIdx = 0;
     tierCenters.forEach((tier, ti) => {
-      const perTier = 4;
+      const perTier = 5;
       for (let i = 0; i < perTier; i++) {
         const ang = (i / perTier) * Math.PI * 2 + ti * 0.9;
         const yFrac = 0.35 + (i % 2) * 0.3; // sit lower/mid on each tier's slope, not right at the point
@@ -7491,8 +7570,8 @@ window.currentTheme = "christmas";
 
     const lightBaseY = standH + trunkH2 + 0.05;
     const lightTopY = treeApexY - 0.10;
-    const lightTurns = 7;
-    const lightCount = 34;
+    const lightTurns = 10;
+    const lightCount = 54;
     const lightBaseR = tierDefs[0].r * 0.95;
     for(let i=0;i<lightCount;i++){
       const tt = i / (lightCount - 1);
