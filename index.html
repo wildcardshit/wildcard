@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -956,6 +956,12 @@ window.currentTheme = "christmas";
   // and faded in/out by the same render-loop logic, gated to
   // currentTheme === "christmas".
   let ceilingChristmasLights = null;
+
+  // Refs for the Christmas string-light strand run around the outer edge
+  // of the large window's frame, set once the window is built below. Same
+  // shared-material fade approach as the ceiling/desk strands, faded by
+  // the render loop, gated to currentTheme === "christmas".
+  let windowFrameChristmasLights = null;
 
   // World-space point hovering just above the coffee table, set once the
   // table is built below. The render loop projects this into screen space
@@ -2095,7 +2101,7 @@ window.currentTheme = "christmas";
         bulb.position.set(x, y, z);
         room.add(bulb);
         const glow = new THREE.Sprite(ceilBulbGlowMats[ci]);
-        glow.scale.set(0.05, 0.05, 1);
+        glow.scale.set(0.062, 0.062, 1);
         glow.position.set(x, y, z);
         room.add(glow);
       }
@@ -2113,7 +2119,7 @@ window.currentTheme = "christmas";
       { x: -clx, z: 0    }
     ];
     ceilLightPositions.forEach(p => {
-      const pl = new THREE.PointLight(0xffdca0, 0, 1.6, 2.0);
+      const pl = new THREE.PointLight(0xffdca0, 0, 2.0, 2.0);
       pl.position.set(p.x, ceilLightY - 0.05, p.z);
       room.add(pl);
       ceilingChristmasLights.pointLights.push(pl);
@@ -4461,6 +4467,100 @@ window.currentTheme = "christmas";
   sill.position.set(0, -winH/2 - 0.02, 0.06);
   sill.receiveShadow = true; sill.castShadow = true;
   windowGroup.add(sill);
+
+  // ---------- Christmas string lights, wrapped around the window's outer frame ----------
+  // A strand of small red/green/warm-white bulbs traces the outer edge of
+  // the frame (built in the window's own local space, so it inherits the
+  // window's real position/rotation/perspective exactly like the frame
+  // itself does) and sits just proud of the frame's front face — never
+  // crossing the glass. Same always-present, zero-by-default approach as
+  // the other Christmas strands: built once here, only ever driven above
+  // zero opacity/intensity by the render loop, gated to currentTheme ===
+  // "christmas" and faded by the same opacity the Christmas toggle already
+  // animates for the window photo.
+  {
+    function makeWinBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const winBulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const winBulbGlowTex = makeWinBulbGlowTexture();
+    const winBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const winBulbMats = winBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const winBulbGlowMats = winBulbColors.map(c => new THREE.SpriteMaterial({
+      map: winBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    windowFrameChristmasLights = { bulbMats: winBulbMats, bulbGlowMats: winBulbGlowMats, pointLights: [] };
+
+    // Outer edge of the physical frame (matches the outer-frame `bar()`
+    // calls above: half-extent = half the opening plus half the frame
+    // thickness), sitting a hair in front of the frame's room-facing face
+    // so the strand reads as mounted on the trim rather than embedded in
+    // it or floating out past it.
+    const winOuterHalfW = winW/2 + frameThick/2;
+    const winOuterHalfH = winH/2 + frameThick/2;
+    const winLightZ = frameDepth + 0.014;
+
+    const winBulbSpacing = 0.16; // even spacing along the strand, meters
+    const winSegments = [
+      { x0: -winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1:  winOuterHalfH }, // top
+      { x0:  winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1: -winOuterHalfH }, // right
+      { x0:  winOuterHalfW, y0: -winOuterHalfH, x1: -winOuterHalfW, y1: -winOuterHalfH }, // bottom
+      { x0: -winOuterHalfW, y0: -winOuterHalfH, x1: -winOuterHalfW, y1:  winOuterHalfH }  // left
+    ];
+
+    let winColorIdx = 0;
+    winSegments.forEach(seg => {
+      const segLen = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
+      const count = Math.max(2, Math.round(segLen / winBulbSpacing));
+      for(let i=0;i<count;i++){
+        const tt = i/(count-1);
+        const x = seg.x0 + (seg.x1 - seg.x0) * tt;
+        const y = seg.y0 + (seg.y1 - seg.y0) * tt;
+
+        const ci = winColorIdx % winBulbColors.length;
+        winColorIdx++;
+        const bulb = new THREE.Mesh(winBulbGeo, winBulbMats[ci]);
+        bulb.position.set(x, y, winLightZ);
+        windowGroup.add(bulb);
+        const glow = new THREE.Sprite(winBulbGlowMats[ci]);
+        glow.scale.set(0.052, 0.052, 1);
+        glow.position.set(x, y, winLightZ);
+        windowGroup.add(glow);
+      }
+    });
+
+    // A couple of soft, low point lights (top and bottom mid-span) so the
+    // strand casts the faintest warm touch onto the frame/nearby wall,
+    // without competing with the window's own scene lighting.
+    const winLightPositions = [
+      { x: 0, y:  winOuterHalfH },
+      { x: 0, y: -winOuterHalfH }
+    ];
+    winLightPositions.forEach(p => {
+      const pl = new THREE.PointLight(0xffdca0, 0, 1.2, 2.0);
+      pl.position.set(p.x, p.y, winLightZ);
+      windowGroup.add(pl);
+      windowFrameChristmasLights.pointLights.push(pl);
+    });
+  }
 
   // ---------- Realistic architectural glass: tint, room reflection, edge thickness ----------
   // A handful of thin translucent layers sandwiched between the sky/clouds
@@ -9615,23 +9715,44 @@ window.currentTheme = "christmas";
     // Christmas string lights run around the ceiling perimeter: same
     // shared-material fade/shimmer approach as the desk strand above, so
     // the whole loop arrives and leaves in lockstep with the rest of the
-    // Christmas toggle's effects. Point lights are kept a touch dimmer
-    // than the desk strand's since there are four of them spread around a
-    // much larger room, and they only need to gently wash the nearby
-    // ceiling/wall, not light the room.
+    // Christmas toggle's effects. Brightness multipliers here are dialed
+    // up noticeably higher than the desk strand's since this loop needs
+    // to read clearly from across the whole room, not just illuminate a
+    // pair of legs up close.
     if(ceilingChristmasLights){
       const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
       const shimmer = 0.94 + Math.sin(t*1.3 + 1.7)*0.04 + Math.sin(t*3.7 + 0.6)*0.02;
       for(let i=0;i<ceilingChristmasLights.bulbMats.length;i++){
         const m = ceilingChristmasLights.bulbMats[i];
         m.opacity = xmasOn;
-        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+        m.emissiveIntensity = xmasOn * 1.9 * shimmer;
       }
       for(let i=0;i<ceilingChristmasLights.bulbGlowMats.length;i++){
-        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.8 * shimmer;
+        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 1.0 * shimmer;
       }
       for(let i=0;i<ceilingChristmasLights.pointLights.length;i++){
-        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.22 * shimmer;
+        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.42 * shimmer;
+      }
+    }
+
+    // Christmas string lights wrapped around the window's outer frame:
+    // same shared-material fade/shimmer approach as the other strands,
+    // kept at moderate (not boosted) brightness since it sits right next
+    // to the window scene's own lighting and only needs a subtle,
+    // individually-glowing accent along the trim.
+    if(windowFrameChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const shimmer = 0.94 + Math.sin(t*1.3 + 3.1)*0.04 + Math.sin(t*3.7 + 2.0)*0.02;
+      for(let i=0;i<windowFrameChristmasLights.bulbMats.length;i++){
+        const m = windowFrameChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+      }
+      for(let i=0;i<windowFrameChristmasLights.bulbGlowMats.length;i++){
+        windowFrameChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.8 * shimmer;
+      }
+      for(let i=0;i<windowFrameChristmasLights.pointLights.length;i++){
+        windowFrameChristmasLights.pointLights[i].intensity = xmasOn * 0.18 * shimmer;
       }
     }
 
