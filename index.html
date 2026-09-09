@@ -380,6 +380,43 @@
     fill: rgba(255,255,255,0.4);
   }
 
+  /* Christmas snow — a lightweight, screen-space overlay of gently falling
+     snowflakes, entirely independent of the Three.js scene (built and
+     appended by the Christmas toggle script only when
+     window.currentTheme === "christmas"). Every flake animates only
+     `transform` on an infinite CSS keyframe loop — no per-frame JS, so it
+     stays cheap even with several dozen on screen. The layer's own
+     opacity starts at 0 and is eased by that same script in lockstep with
+     the window photo's fade, so the snow appears/disappears together with
+     the rest of the Christmas scene rather than on its own timer.
+     Non-interactive and stacked above the 3D canvas but below the toggle
+     buttons. */
+  #christmasSnowLayer{
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0;
+  }
+  #christmasSnowLayer .xm-snowflake{
+    position: absolute;
+    top: -12px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #ffffff 0%, rgba(255,255,255,0.9) 45%, rgba(255,255,255,0) 100%);
+    animation-name: xmSnowFall;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform;
+  }
+  @keyframes xmSnowFall{
+    0%   { transform: translate(0, -5vh) rotate(0deg); }
+    25%  { transform: translate(var(--xm-drift, 12px), 25vh) rotate(45deg); }
+    50%  { transform: translate(calc(var(--xm-drift, 12px) * -1), 50vh) rotate(90deg); }
+    75%  { transform: translate(var(--xm-drift, 12px), 75vh) rotate(135deg); }
+    100% { transform: translate(0, 108vh) rotate(180deg); }
+  }
+
   /* Mute toggle — mirrors #themeToggleBtn's glassy circular style exactly,
      mirrored to the top-left corner. Purely a self-contained icon toggle
      that flips the muted property on #bgMusic. */
@@ -869,7 +906,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9610,7 +9647,12 @@ window.currentTheme = "christmas";
 // as the Halloween toggle's purple->orange LEDs — just with its own
 // colors/texture defined locally here, so window.__roomDayNight's shared
 // purpleGlowTex/orangeGlowTex and the Halloween script's own colors are
-// completely untouched. No snow, or anything else, is wired up yet.
+// completely untouched.
+//
+// Finally, it builds a lightweight screen-space snow overlay (plain CSS
+// `transform`-only keyframe animations, no per-frame JS) and fades its
+// container's opacity in lockstep with the same window-photo progress, so
+// snow appears/disappears together with the rest of the Christmas scene.
 (function(){
   // Theme setting (shared with window.currentTheme, set near the top of the
   // file): "normal" and "halloween" keep this button hidden and completely
@@ -9687,13 +9729,47 @@ window.currentTheme = "christmas";
     }
   }
 
+  // ---------- Snow overlay (screen-space, independent of the 3D scene) ----------
+  // A handful of small, softly-blurred CSS "dots" drift down the whole
+  // viewport on a slow (14–26s), gently swaying, infinite loop. Built once
+  // up front (count trimmed on the same mobile-perf tier flag the 3D scene
+  // itself uses) and left in the DOM at all times — like the window photo
+  // layer, it starts invisible (opacity 0, set in CSS) and is only ever
+  // revealed by easing its opacity, never by adding/removing flakes.
+  const snowLayer = document.createElement('div');
+  snowLayer.id = 'christmasSnowLayer';
+  snowLayer.setAttribute('aria-hidden', 'true');
+  const isMobilePerf = document.documentElement.classList.contains('perf-mobile');
+  const snowflakeCount = isMobilePerf ? 20 : 40;
+  for(let i=0;i<snowflakeCount;i++){
+    const flake = document.createElement('div');
+    flake.className = 'xm-snowflake';
+    const size = 2 + Math.random()*3.5;          // 2–5.5px: small and subtle
+    const duration = 14 + Math.random()*12;       // 14–26s: slow, natural fall
+    const delay = -Math.random()*duration;        // negative delay staggers starting points
+    const drift = 10 + Math.random()*22;          // px of side-to-side sway
+    flake.style.left = (Math.random()*100).toFixed(2) + '%';
+    flake.style.width = size.toFixed(2) + 'px';
+    flake.style.height = size.toFixed(2) + 'px';
+    flake.style.opacity = (0.35 + Math.random()*0.45).toFixed(2);
+    flake.style.animationDuration = duration.toFixed(2) + 's';
+    flake.style.animationDelay = delay.toFixed(2) + 's';
+    flake.style.setProperty('--xm-drift', drift.toFixed(1) + 'px');
+    snowLayer.appendChild(flake);
+  }
+  document.body.appendChild(snowLayer);
+
   function stepFade(now){
     const anim = fadeAnim;
     const ctx = window.__roomDayNight;
     if(!anim || !ctx || !ctx.windowScene || !ctx.windowScene.halloweenMat) return;
     const t = Math.min(1, (now - anim.start) / anim.dur);
     const e = t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; // easeInOutCubic
-    ctx.windowScene.halloweenMat.opacity = anim.from + (anim.to - anim.from) * e;
+    const opacity = anim.from + (anim.to - anim.from) * e;
+    ctx.windowScene.halloweenMat.opacity = opacity;
+    // Snow fades in lockstep with the window photo — same progress value,
+    // same start/end, so both arrive and leave together.
+    snowLayer.style.opacity = opacity;
     // LED color eases using the same progress and direction as the window
     // scene fade, so both land together.
     applyScreenLedColorChristmas(anim.to > anim.from ? e : 1 - e);
@@ -9711,6 +9787,7 @@ window.currentTheme = "christmas";
       isChristmas = on;
       btn.classList.toggle('active', on);
       applyScreenLedColorChristmas(on ? 1 : 0);
+      snowLayer.style.opacity = on ? 1 : 0;
       return;
     }
     const from = ctx.windowScene.halloweenMat.opacity;
