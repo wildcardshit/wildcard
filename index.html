@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "halloween";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -942,6 +942,13 @@ window.currentTheme = "halloween";
   // landscape), set once the window is built below, so the sun/moon toggle
   // script can animate the swap in lockstep with the room's lighting.
   let windowSceneRefs = null;
+
+  // Refs for the Christmas string-light strand wrapped around the desk
+  // legs, set once the desk is built below: shared bulb/glow materials
+  // (one set per color) plus the couple of point lights that give the
+  // strand a little real illumination. The render loop fades all of it
+  // in/out together, gated to currentTheme === "christmas".
+  let deskChristmasLights = null;
 
   // World-space point hovering just above the coffee table, set once the
   // table is built below. The render loop projects this into screen space
@@ -4682,10 +4689,14 @@ window.currentTheme = "halloween";
     edgeTrim(trimT, deskD + trimT*2, -deskW/2 - trimT/2, deskD/2);
     edgeTrim(trimT, deskD + trimT*2, deskW/2 + trimT/2, deskD/2);
 
+    // Shared leg-frame dimensions — used by makeLegFrame just below and by
+    // the Christmas light wrap further down, so both agree exactly on the
+    // legs' real position/radius/height.
+    const legR = 0.022;
+    const legH = deskTopY - deskThick/2;
+
     function makeLegFrame(xSide){
       const g = new THREE.Group();
-      const legR = 0.022;
-      const legH = deskTopY - deskThick/2;
 
       const frontLeg = new THREE.Mesh(new THREE.CylinderGeometry(legR, legR, legH, 12), metalMat);
       frontLeg.position.set(xSide, legH/2, deskD - 0.06);
@@ -4717,6 +4728,125 @@ window.currentTheme = "halloween";
       addContactShadow(setup, xSide, deskD - 0.06, 0.10, 0.09, 0.7);
       addContactShadow(setup, xSide, 0.06, 0.10, 0.09, 0.7);
     });
+
+    // ---------- Christmas string lights, wrapped around the desk legs ----------
+    // A small strand of red/green/warm-white bulbs, physically coiled around
+    // each leg pair's two vertical legs and the horizontal stretcher that
+    // joins them — following the frame's real shape (helix around each
+    // cylinder) rather than a straight line floating in space. Built once,
+    // always present in the scene (same approach as the Halloween leaves and
+    // Christmas snow above), but every bulb/glow/point-light starts at zero
+    // intensity/opacity and is only ever driven above zero by the render
+    // loop below, gated to currentTheme === "christmas" and faded by the
+    // same opacity the Christmas toggle already animates for the window
+    // photo — so the strand fades in/out with the toggle and is completely
+    // inert (and invisible) in every other theme.
+    //
+    // Every bulb of a given color shares one material (and every halo of a
+    // given color shares one sprite material), so lighting the whole strand
+    // up or down each frame is 6 material/light writes total, not one per
+    // bulb — the per-instance cost is just the (cheap, low-poly) meshes.
+    function makeBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const bulbGlowTex = makeBulbGlowTexture();
+    const bulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const bulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const bulbMats = bulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const bulbGlowMats = bulbColors.map(c => new THREE.SpriteMaterial({
+      map: bulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    deskChristmasLights = { bulbMats, bulbGlowMats, pointLights: [] };
+
+    // Places one small bulb + matching soft halo sprite at each point along
+    // a pre-computed coil path, cycling red -> green -> warm-white so the
+    // strand reads as a continuous, evenly-spaced string rather than random
+    // scatter. `colorStart` lets successive segments (front leg -> stretcher
+    // -> back leg) continue the same color cycle instead of each resetting.
+    function placeBulbsAlongPath(points, colorStart){
+      for(let i=0;i<points.length;i++){
+        const ci = (colorStart + i) % bulbColors.length;
+        const bulb = new THREE.Mesh(bulbGeo, bulbMats[ci]);
+        bulb.position.copy(points[i]);
+        setup.add(bulb);
+        const glow = new THREE.Sprite(bulbGlowMats[ci]);
+        glow.scale.set(0.028, 0.028, 1);
+        glow.position.copy(points[i]);
+        setup.add(glow);
+      }
+      return points.length;
+    }
+
+    // A vertical helix wound around a leg cylinder, from just above the
+    // floor to just under the desktop's underside (leaving a gap so bulbs
+    // never poke through the desktop).
+    function verticalWrapPoints(x, z, yStart, yEnd, turns, radius, count){
+      const pts = [];
+      for(let i=0;i<count;i++){
+        const tt = count > 1 ? i/(count-1) : 0;
+        const y = yStart + (yEnd - yStart) * tt;
+        const ang = tt * Math.PI * 2 * turns;
+        pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y, z + Math.sin(ang)*radius));
+      }
+      return pts;
+    }
+    // A horizontal helix wound around the stretcher bar joining the two legs.
+    function horizontalWrapPoints(x, y, zStart, zEnd, turns, radius, count){
+      const pts = [];
+      for(let i=0;i<count;i++){
+        const tt = count > 1 ? i/(count-1) : 0;
+        const z = zStart + (zEnd - zStart) * tt;
+        const ang = tt * Math.PI * 2 * turns;
+        pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y + Math.sin(ang)*radius, z));
+      }
+      return pts;
+    }
+
+    const wrapRadius = legR * 1.7;
+    const stretchWrapRadius = legR * 0.8 * 1.9;
+    const wrapYStart = 0.03;               // just above the floor
+    const wrapYEnd = legH - 0.05;          // just short of the desktop underside
+    [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
+      let colorIdx = 0;
+      const frontPts = verticalWrapPoints(xSide, deskD - 0.06, wrapYStart, wrapYEnd, 4, wrapRadius, 15);
+      colorIdx += placeBulbsAlongPath(frontPts, colorIdx);
+      const stretchPts = horizontalWrapPoints(xSide, legH*0.22, deskD - 0.10, 0.10, 3, stretchWrapRadius, 10);
+      colorIdx += placeBulbsAlongPath(stretchPts, colorIdx);
+      const backPts = verticalWrapPoints(xSide, 0.06, wrapYEnd, wrapYStart, 4, wrapRadius, 15);
+      colorIdx += placeBulbsAlongPath(backPts, colorIdx);
+    });
+
+    // A couple of low, soft point lights (one per leg pair) so the strand
+    // actually casts a little warm light onto the nearby legs and floor,
+    // rather than only reading as glowing sprites. Kept to just two lights
+    // total, positioned low near the densest part of each coil, with a
+    // short falloff distance so the effect stays a subtle cozy pool rather
+    // than washing out the room.
+    [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
+      const pl = new THREE.PointLight(0xffdca0, 0, 0.7, 2.0);
+      pl.position.set(xSide, 0.18, deskD/2);
+      setup.add(pl);
+      deskChristmasLights.pointLights.push(pl);
+    });
+
 
     // ----- Desk mat: soft-edged rectangle under the keyboard/mouse — the ----
     // ----- small detail that instantly reads as "someone's real desk" ----
@@ -9327,6 +9457,30 @@ window.currentTheme = "halloween";
     if(windowSceneRefs.snowGlowMat){
       const snowOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
       windowSceneRefs.snowGlowMat.opacity = snowOn * (0.45 + nightF*0.5) * (0.9 + Math.sin(t*0.6)*0.1);
+    }
+
+    // Christmas string lights wrapped around the desk legs: every bulb of a
+    // given color shares one material (same for the halo sprites), so
+    // fading the whole strand in/out — and giving it a faint, cozy shimmer,
+    // like a real strand on household AC current — is a handful of writes
+    // per frame rather than one per bulb. Gated to currentTheme ===
+    // "christmas" and driven by the same opacity the Christmas toggle
+    // already animates for the window photo, so the strand arrives and
+    // leaves in lockstep with everything else the toggle controls.
+    if(deskChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const shimmer = 0.94 + Math.sin(t*1.3)*0.04 + Math.sin(t*3.7)*0.02;
+      for(let i=0;i<deskChristmasLights.bulbMats.length;i++){
+        const m = deskChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 1.1 * shimmer;
+      }
+      for(let i=0;i<deskChristmasLights.bulbGlowMats.length;i++){
+        deskChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.85 * shimmer;
+      }
+      for(let i=0;i<deskChristmasLights.pointLights.length;i++){
+        deskChristmasLights.pointLights[i].intensity = xmasOn * 0.35 * shimmer;
+      }
     }
 
 
