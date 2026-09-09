@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -2017,12 +2017,14 @@ window.currentTheme = "christmas";
   // strand arrives and leaves in lockstep with everything else the toggle
   // controls, and is completely inert (and invisible) in every other theme.
   {
-    // Dropped a hair below the true ceiling line so the bulbs read as
-    // mounted just under the crown rather than clipping into the ceiling
-    // plane, and pulled in slightly from the wall faces so they sit
-    // against the wall rather than floating out over the room.
-    const ceilLightY = H - 0.06;
-    const ceilInset = 0.05;
+    // Positioned exactly at the wall/ceiling seam — right at the true
+    // ceiling height and right at the true wall planes (halfW/halfL) —
+    // with only a hair's epsilon pulled in/down to avoid z-fighting with
+    // the ceiling and wall meshes, so the strand reads as sitting flush in
+    // the crease rather than floating below the ceiling or lying on the
+    // wall face.
+    const ceilLightY = H - 0.008;
+    const ceilInset = 0.008;
     const clx = halfW - ceilInset;
     const clz = halfL - ceilInset;
 
@@ -2073,13 +2075,6 @@ window.currentTheme = "christmas";
       { x0: -clx, z0: clz,  x1: -clx, z1: -clz } // left wall seam
     ];
 
-    // A very slight downward sag between "hook points" along each wall
-    // (like a real strand tacked up every foot or so, not pulled drum-tight)
-    // so the loop reads as physically hung rather than a rigid, perfectly
-    // straight rail.
-    const sagHooks = 6;      // hook points per wall run
-    const sagAmount = 0.012; // how far each mid-span dips, meters
-
     let colorIdx = 0;
     ceilSegments.forEach(seg => {
       const segLen = Math.hypot(seg.x1 - seg.x0, seg.z1 - seg.z0);
@@ -2088,12 +2083,10 @@ window.currentTheme = "christmas";
         const tt = i/(count-1);
         const x = seg.x0 + (seg.x1 - seg.x0) * tt;
         const z = seg.z0 + (seg.z1 - seg.z0) * tt;
-        // Small sinusoidal sag repeating every wall-run so each span
-        // between hooks dips gently at its middle and returns to the
-        // seam height at each hook point.
-        const sagPhase = (tt * sagHooks) % 1;
-        const sag = Math.sin(sagPhase * Math.PI) * sagAmount;
-        const y = ceilLightY - sag;
+        // No sag: the strand runs perfectly flush along the wall/ceiling
+        // seam at constant height throughout, rather than dipping below
+        // the ceiling line between hook points.
+        const y = ceilLightY;
 
         const ci = colorIdx % ceilBulbColors.length;
         colorIdx++;
@@ -2120,7 +2113,7 @@ window.currentTheme = "christmas";
     ];
     ceilLightPositions.forEach(p => {
       const pl = new THREE.PointLight(0xffdca0, 0, 2.0, 2.0);
-      pl.position.set(p.x, ceilLightY - 0.05, p.z);
+      pl.position.set(p.x, ceilLightY, p.z);
       room.add(pl);
       ceilingChristmasLights.pointLights.push(pl);
     });
@@ -4560,6 +4553,67 @@ window.currentTheme = "christmas";
       windowGroup.add(pl);
       windowFrameChristmasLights.pointLights.push(pl);
     });
+
+    // ---------- Same strand extended onto the interior mullions ----------
+    // Follows the actual vertical/horizontal dividing bars built above
+    // (same cols/rows grid, same x/y positions), sitting just proud of
+    // each mullion's own front face — never over the bare glass between
+    // them. Kept on separate materials so the render loop can dim these a
+    // notch below the outer frame, so the window doesn't read as
+    // uniformly, overly lit.
+    const winMullionBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const winMullionBulbMats = winBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const winMullionGlowMats = winBulbColors.map(c => new THREE.SpriteMaterial({
+      map: winBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    windowFrameChristmasLights.mullionBulbMats = winMullionBulbMats;
+    windowFrameChristmasLights.mullionGlowMats = winMullionGlowMats;
+
+    // Just proud of each mullion's own front face (mullions are centered
+    // at frameDepth/2 - 0.005 with depth mDepth, so their front face sits
+    // at that center plus half their depth).
+    const mullionLightZ = (frameDepth/2 - 0.005) + (mDepth/2) + 0.012;
+    let mullionColorIdx = 0;
+    function placeMullionBulbs(points){
+      points.forEach(pt => {
+        const ci = mullionColorIdx % winBulbColors.length;
+        mullionColorIdx++;
+        const bulb = new THREE.Mesh(winMullionBulbGeo, winMullionBulbMats[ci]);
+        bulb.position.set(pt.x, pt.y, mullionLightZ);
+        windowGroup.add(bulb);
+        const glow = new THREE.Sprite(winMullionGlowMats[ci]);
+        glow.scale.set(0.045, 0.045, 1);
+        glow.position.set(pt.x, pt.y, mullionLightZ);
+        windowGroup.add(glow);
+      });
+    }
+    // Vertical mullions (cols-1 of them) run the window's full height.
+    for(let c=1; c<cols; c++){
+      const mx = -winW/2 + (winW/cols)*c;
+      const count = Math.max(2, Math.round(winH / winBulbSpacing));
+      const pts = [];
+      for(let i=0;i<count;i++){
+        const tt = i/(count-1);
+        pts.push({ x: mx, y: -winH/2 + winH*tt });
+      }
+      placeMullionBulbs(pts);
+    }
+    // Horizontal mullions (rows-1 of them) run the window's full width.
+    for(let r=1; r<rows; r++){
+      const my = -winH/2 + (winH/rows)*r;
+      const count = Math.max(2, Math.round(winW / winBulbSpacing));
+      const pts = [];
+      for(let i=0;i<count;i++){
+        const tt = i/(count-1);
+        pts.push({ x: -winW/2 + winW*tt, y: my });
+      }
+      placeMullionBulbs(pts);
+    }
   }
 
   // ---------- Realistic architectural glass: tint, room reflection, edge thickness ----------
@@ -9753,6 +9807,19 @@ window.currentTheme = "christmas";
       }
       for(let i=0;i<windowFrameChristmasLights.pointLights.length;i++){
         windowFrameChristmasLights.pointLights[i].intensity = xmasOn * 0.18 * shimmer;
+      }
+      // Interior mullion strand: same fade/shimmer, but dialed down a
+      // notch below the outer frame so the window reads as accented along
+      // its trim rather than uniformly, overly lit across its whole face.
+      if(windowFrameChristmasLights.mullionBulbMats){
+        for(let i=0;i<windowFrameChristmasLights.mullionBulbMats.length;i++){
+          const m = windowFrameChristmasLights.mullionBulbMats[i];
+          m.opacity = xmasOn;
+          m.emissiveIntensity = xmasOn * 0.65 * shimmer;
+        }
+        for(let i=0;i<windowFrameChristmasLights.mullionGlowMats.length;i++){
+          windowFrameChristmasLights.mullionGlowMats[i].opacity = xmasOn * 0.5 * shimmer;
+        }
       }
     }
 
