@@ -3087,7 +3087,7 @@
       const c = document.createElement('canvas');
       c.width = img.width; c.height = img.height;
       const cctx = c.getContext('2d');
-      cctx.filter = 'blur(2px)';
+      cctx.filter = 'blur(0.6px)';
       cctx.drawImage(img, 0, 0);
       loaded.image = c;
       loaded.needsUpdate = true;
@@ -3132,7 +3132,7 @@
       const c = document.createElement('canvas');
       c.width = img.width; c.height = img.height;
       const cctx = c.getContext('2d');
-      cctx.filter = 'blur(2px)';
+      cctx.filter = 'blur(0.6px)';
       cctx.drawImage(img, 0, 0);
       loaded.image = c;
       loaded.needsUpdate = true;
