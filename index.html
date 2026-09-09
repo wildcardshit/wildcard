@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -3927,7 +3927,11 @@ window.currentTheme = "christmas";
   snowGroup.position.z = 0.0019; // just in front of the leaf layer, still behind the frame/glass
   windowGroup.add(snowGroup);
 
-  const snowHalfSpanX = winW * 0.5;
+  // Inset well short of the window's actual half-width so there's room for
+  // the per-flake wind lean below (which pushes flakes further sideways as
+  // they fall) to fully fade out before a flake would otherwise reach the
+  // physical edge of the window pane.
+  const snowHalfSpanX = winW * 0.40;
   function pickSnowBaseX(){
     return (Math.random()*2 - 1) * snowHalfSpanX;
   }
@@ -3962,7 +3966,7 @@ window.currentTheme = "christmas";
       // to one side as they drop, biased mostly one direction (like real
       // wind-driven snow) but with per-flake spread so it doesn't look
       // like uniform rain-on-an-angle.
-      windLean: 0.10 + Math.random()*0.22,
+      windLean: 0.02 + Math.random()*0.06,
       // A small extra side-to-side sway layered on top of the wind lean,
       // for a bit of natural flutter.
       swayAmp: winW * (0.004 + Math.random()*0.01) * (0.4 + depth*0.6),
@@ -9276,8 +9280,14 @@ window.currentTheme = "christmas";
       const snowTopEdge = halfWinH - winH*0.02;
       const snowFloorEdge = -halfWinH;
       const snowFadeBand = winH*0.05;
-      const snowHEdge = halfWinW * 0.96;
-      const snowHFadeWidth = winW * 0.08;
+      // The fade band must fully reach zero opacity *before* halfWinW (the
+      // window pane's actual physical edge) — otherwise a wind-blown flake
+      // is still partly visible past the frame for a beat, which is what
+      // was bleeding past the right edge of the window. Ending the fade at
+      // 0.9*halfWinW leaves a solid safety margin inside the pane.
+      const snowHEdge = halfWinW * 0.62;
+      const snowHFadeWidth = halfWinW * 0.28;
+      const snowHClamp = halfWinW * 0.985; // hard safety net, just in case
       for(let i=0;i<flakes.length;i++){
         const flake = flakes[i];
         const gust = 1 + flake.gustAmp * Math.sin(t*flake.gustFreq + flake.gustPhase);
@@ -9294,7 +9304,7 @@ window.currentTheme = "christmas";
         const fallen = snowTopEdge - flake.y; // distance dropped since last reset
         const sway = Math.sin(t*flake.swayFreq + flake.swayPhase) * flake.swayAmp;
         const windX = fallen * flake.windLean * gust;
-        const x = flake.baseX + windX + sway;
+        const x = Math.max(-snowHClamp, Math.min(snowHClamp, flake.baseX + windX + sway));
         flake.mesh.position.x = x;
         flake.mesh.position.y = flake.y;
         flake.mesh.rotation.z = flake.rotPhase + t*flake.rotSpeed;
