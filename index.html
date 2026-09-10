@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "halloween";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -9447,7 +9447,7 @@ window.currentTheme = "halloween";
   const clock = new THREE.Clock();
   let rafHandle = null;
   let lastPromoFrame = 0;
-  const PROMO_FRAME_INTERVAL = 1000 / 45;
+  const PROMO_FRAME_INTERVAL = 1000 / 30;
   function animate(){
     rafHandle = requestAnimationFrame(animate);
     const frameNow = performance.now();
