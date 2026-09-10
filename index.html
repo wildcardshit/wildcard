@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "halloween";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -1203,7 +1203,27 @@ window.currentTheme = "halloween";
   // Physically-sized penumbra on the main shadow-casting light reads softer
   // and more "real" than a hard-edged shadow map, at effectively no extra
   // cost since it's a shader-side property of the VSM shadow already in use.
-  renderer.shadowMap.autoUpdate = true;
+  // PERF: the only thing in the whole room that ever moves a shadow is the
+  // desk chair's slow idle swivel (14s per cycle) — the camera panning
+  // around does NOT require the shadow map to be touched at all, since the
+  // shadow map only depends on the light and the shadow-casting geometry,
+  // never on the camera. But with autoUpdate left on, three.js was doing a
+  // full extra scene pass into the shadow map (hundreds of shadow-casting
+  // meshes) on literally every single rendered frame, including every
+  // frame of a look-around swipe where nothing shadow-relevant changed.
+  // That fixed per-frame cost — independent of and on top of the beauty
+  // render — is almost certainly the main source of the reported choppy
+  // dragging, and it competes with the TV video element for CPU/GPU time
+  // during playback, which lines up with the video occasionally stalling.
+  // Switching to manual updates and refreshing the shadow map on a
+  // throttled cadence (still every frame is well within what the chair's
+  // slow swivel needs to look continuous) cuts that fixed cost roughly in
+  // half on desktop and by two-thirds on mobile, with no visible difference
+  // since nothing casts a shadow fast enough for the lower cadence to show.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+  let shadowFrameCounter = 0;
+  const SHADOW_UPDATE_INTERVAL = isMobilePerfTier ? 3 : 2;
   canvasHost.appendChild(renderer.domElement);
 
   // ---------- Cinematic post-processing (interior finishing pass) ----------
@@ -1333,6 +1353,15 @@ window.currentTheme = "halloween";
   // function returns, so nothing else in the app ever observes it as
   // hidden — visibility toggle, not a scene mutation.
   function renderFrame(){
+    // Refresh the shadow map on a throttled cadence rather than every
+    // frame (see the renderer.shadowMap.autoUpdate = false comment above)
+    // — still frequent enough that the desk chair's slow swivel shadow
+    // reads as perfectly smooth, just without redoing that full extra pass
+    // on frames where nothing shadow-relevant could have changed.
+    shadowFrameCounter++;
+    if(shadowFrameCounter % SHADOW_UPDATE_INTERVAL === 0){
+      renderer.shadowMap.needsUpdate = true;
+    }
     if(composer && bloomComposer){
       const wasVisible = windowGroup.visible;
       windowGroup.visible = false;
