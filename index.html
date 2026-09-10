@@ -801,17 +801,7 @@
      (see turnOnTV() in the main scene script), so these stay
      unloaded at page-load time rather than competing with the
      essential 3D scene for bandwidth. -->
-<video id="tvVideo" src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="metadata" style="display:none;"></video>
-<script>
-  // 3-monitor promo mode: use a lower-resolution copy for the TV texture.
-  // The TV is relatively small in the 3D scene, so this preserves its appearance
-  // while substantially reducing per-frame GPU texture uploads.
-  if (new URLSearchParams(window.location.search).has("multimonitor")) {
-    const tv = document.getElementById("tvVideo");
-    tv.src = "tv-promo-640.mp4";
-    tv.load();
-  }
-</script>
+<video id="tvVideo" src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="auto" style="display:none;"></video>
 <audio id="bgMusic" src="intro-music.mp3" loop preload="none" style="display:none;"></audio>
 
 <div id="enterTransition" aria-hidden="true">
@@ -879,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "halloween";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -1186,9 +1176,6 @@ window.currentTheme = "halloween";
   const isCoarsePointerStartup = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   const isSmallViewportStartup = Math.min(window.innerWidth, window.innerHeight) <= 760;
   const isMobilePerfTier = isCoarsePointerStartup && isSmallViewportStartup;
-  // Optional promo mode for running the cinematic index page on multiple monitors.
-  // It keeps the scene/appearance intact while reducing per-window GPU workload.
-  const isMultiMonitorPromo = new URLSearchParams(window.location.search).has('multimonitor');
   if(isMobilePerfTier) document.documentElement.classList.add('perf-mobile');
 
   const canvasHost = document.body;
@@ -1202,8 +1189,7 @@ window.currentTheme = "halloween";
   // screen is capable of. Kept high to start so mobile renders crisp; if
   // the device turns out too slow to sustain that, mobileDprWatchdog below
   // steps it back down automatically once real frame times come in.
-  const desktopDprCap = isMultiMonitorPromo ? 1.5 : 2;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobilePerfTier ? 3 : desktopDprCap));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobilePerfTier ? 3 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = isMobilePerfTier ? THREE.PCFSoftShadowMap : THREE.VSMShadowMap;
@@ -9456,13 +9442,8 @@ window.currentTheme = "halloween";
   // ---------- Animate ----------
   const clock = new THREE.Clock();
   let rafHandle = null;
-  let lastPromoFrame = 0;
-  const PROMO_FRAME_INTERVAL = 1000 / 30;
   function animate(){
     rafHandle = requestAnimationFrame(animate);
-    const frameNow = performance.now();
-    if(isMultiMonitorPromo && frameNow - lastPromoFrame < PROMO_FRAME_INTERVAL) return;
-    lastPromoFrame = frameNow;
     const dt = clock.getDelta();
     const t = clock.elapsedTime;
     // Single timestamp shared by every subsystem driven off this frame
