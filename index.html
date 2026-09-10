@@ -801,7 +801,17 @@
      (see turnOnTV() in the main scene script), so these stay
      unloaded at page-load time rather than competing with the
      essential 3D scene for bandwidth. -->
-<video id="tvVideo" src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="auto" style="display:none;"></video>
+<video id="tvVideo" src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="metadata" style="display:none;"></video>
+<script>
+  // 3-monitor promo mode: use a lower-resolution copy for the TV texture.
+  // The TV is relatively small in the 3D scene, so this preserves its appearance
+  // while substantially reducing per-frame GPU texture uploads.
+  if (new URLSearchParams(window.location.search).has("multimonitor")) {
+    const tv = document.getElementById("tvVideo");
+    tv.src = "tv-promo-640.mp4";
+    tv.load();
+  }
+</script>
 <audio id="bgMusic" src="intro-music.mp3" loop preload="none" style="display:none;"></audio>
 
 <div id="enterTransition" aria-hidden="true">
@@ -869,7 +879,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "christmas";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
