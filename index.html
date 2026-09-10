@@ -869,7 +869,7 @@
 // Site-wide theme setting, shared by the window-photo setup below and the
 // Halloween toggle script near the end of the file so both read the same
 // value. "normal" | "halloween" | "christmas"
-window.currentTheme = "halloween";
+window.currentTheme = "normal";
 </script>
 <script>
 (function(){
@@ -1184,12 +1184,13 @@ window.currentTheme = "halloween";
   // the cheapest wins here, since MSAA cost scales with both resolution and
   // pixel ratio, and mobile runs both of those higher than desktop below.
   const renderer = new THREE.WebGLRenderer({ antialias: !isMobilePerfTier, powerPreference: 'high-performance' });
-  // Mobile screens are typically higher-DPI than desktop, so capping this
-  // below devicePixelRatio (as before) rendered noticeably softer than the
-  // screen is capable of. Kept high to start so mobile renders crisp; if
-  // the device turns out too slow to sustain that, mobileDprWatchdog below
-  // steps it back down automatically once real frame times come in.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobilePerfTier ? 3 : 2));
+  // Mobile screens are typically higher-DPI than desktop, but rendering this
+  // scene (shadows, hundreds of shadow-casting meshes) at up to 3x pixel
+  // density on phone GPUs is what was causing the reported lag/choppy
+  // dragging and the TV video struggling to keep up — capped in line with
+  // desktop's 2x instead. mobileDprWatchdog below still steps it down
+  // further on devices that need it.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = isMobilePerfTier ? THREE.PCFSoftShadowMap : THREE.VSMShadowMap;
