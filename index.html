@@ -1550,17 +1550,18 @@ window.currentTheme = "halloween";
   // Faint painted-drywall stipple/undulation so the walls stop reading as
   // perfectly even CG planes — subtle enough to disappear at a glance, but
   // it breaks up the dead-flat specular response under grazing light.
-  const wallPlaster = makePlasterMaps(512, '#efe9df');
-  wallPlaster.roughMap.repeat.set(3, 2);
-  wallPlaster.bumpMap.repeat.set(3, 2);
+  const wallPlaster = makePlasterMaps(256, '#efe9df');
+  // 256px map => repeat doubled so each texel covers the same world area as before (grain stays the same size)
+  wallPlaster.roughMap.repeat.set(6, 4);
+  wallPlaster.bumpMap.repeat.set(6, 4);
   const wallMat  = new THREE.MeshStandardMaterial({
     color: wallColor, roughness: 0.96, metalness: 0,
     roughnessMap: wallPlaster.roughMap, bumpMap: wallPlaster.bumpMap, bumpScale: 0.0006
   });
   const ceilMat  = new THREE.MeshStandardMaterial({ color: ceilColor,  roughness: 0.98, metalness: 0 });
-  const backWallPlaster = makePlasterMaps(512, '#f1ece2');
-  backWallPlaster.roughMap.repeat.set(3, 2);
-  backWallPlaster.bumpMap.repeat.set(3, 2);
+  const backWallPlaster = makePlasterMaps(256, '#f1ece2');
+  backWallPlaster.roughMap.repeat.set(6, 4);
+  backWallPlaster.bumpMap.repeat.set(6, 4);
   const backWallMat = new THREE.MeshStandardMaterial({
     color: 0xf1ece2, roughness: 0.97,
     roughnessMap: backWallPlaster.roughMap, bumpMap: backWallPlaster.bumpMap, bumpScale: 0.0006
@@ -2006,11 +2007,13 @@ window.currentTheme = "halloween";
     return rt.texture;
   }
 
-  const oakColorMap = makeOakColorMap(1024);
-  const oakRoughMap = makeOakRoughnessMap(1024);
-  const oakBumpMap = makeOakBumpMap(1024);
-  const hdriEnvMap = makeHDRIEnvironment(renderer);
-  scene.environment = hdriEnvMap; // soft ambient/IBL for every PBR material in the room
+  const oakColorMap = makeOakColorMap(512);
+  const oakRoughMap = makeOakRoughnessMap(512);
+  const oakBumpMap = makeOakBumpMap(512);
+  // The PMREM bake is deferred until after the first frame has been rendered (see
+  // applyHDRIEnvironment below), so the room appears first. Materials that take the
+  // baked map directly are tagged with userData.hdriEnv and get it assigned then.
+  let hdriEnvMap = null;
 
   const floorMat = new THREE.MeshPhysicalMaterial({
     map: oakColorMap,
@@ -2021,7 +2024,7 @@ window.currentTheme = "halloween";
     metalness: 0.02,
     clearcoat: 0.5,
     clearcoatRoughness: 0.17,
-    envMap: hdriEnvMap,
+    envMap: hdriEnvMap, userData: { hdriEnv: true },
     envMapIntensity: 0.65,
     reflectivity: 0.45
   });
@@ -2466,7 +2469,9 @@ window.currentTheme = "halloween";
     }
     bctx.putImageData(bimg,0,0);
     // A couple of very soft, large undulations (drywall-mud waviness)
-    for(let i=0;i<4;i++){
+    // (count scaled with tile area so undulation density per wall area is unchanged at the smaller size)
+    const undulations = Math.max(1, Math.round(4 * (size/512) * (size/512)));
+    for(let i=0;i<undulations;i++){
       const x=Math.random()*size, y=Math.random()*size, r=size*(0.3+Math.random()*0.3);
       const g = bctx.createRadialGradient(x,y,0,x,y,r);
       g.addColorStop(0, 'rgba(255,255,255,0.04)');
@@ -2573,7 +2578,7 @@ window.currentTheme = "halloween";
       bumpScale: 0.0006,
       roughness: 0.5,
       metalness: 0.92,
-      envMap: hdriEnvMap,
+      envMap: hdriEnvMap, userData: { hdriEnv: true },
       envMapIntensity: 0.9,
       clearcoat: 0.12,
       clearcoatRoughness: 0.45
@@ -2593,7 +2598,7 @@ window.currentTheme = "halloween";
       roughnessMap: brushedMetal.roughMap,
       roughness: 0.28,
       metalness: 0.95,
-      envMap: hdriEnvMap,
+      envMap: hdriEnvMap, userData: { hdriEnv: true },
       envMapIntensity: 1.4,
       clearcoat: 0.3,
       clearcoatRoughness: 0.2
@@ -2643,7 +2648,7 @@ window.currentTheme = "halloween";
       metalness: 0,
       ior: 1.52,
       thickness: 0.01,
-      envMap: hdriEnvMap,
+      envMap: hdriEnvMap, userData: { hdriEnv: true },
       envMapIntensity: 1.1,
       clearcoat: 0.6,
       clearcoatRoughness: 0.08,
@@ -4471,7 +4476,7 @@ window.currentTheme = "halloween";
     bumpScale: 0.0005,
     roughness: 0.55,
     metalness: 0.85,
-    envMap: hdriEnvMap,
+    envMap: hdriEnvMap, userData: { hdriEnv: true },
     envMapIntensity: 0.75,
     clearcoat: 0.12,
     clearcoatRoughness: 0.45
@@ -4540,7 +4545,7 @@ window.currentTheme = "halloween";
     roughnessMap: brushedMetal.roughMap,
     roughness: 0.25,
     metalness: 0.95,
-    envMap: hdriEnvMap,
+    envMap: hdriEnvMap, userData: { hdriEnv: true },
     envMapIntensity: 1.3,
     clearcoat: 0.35,
     clearcoatRoughness: 0.18
@@ -7169,7 +7174,8 @@ window.currentTheme = "halloween";
     // is bump-only (grayscale), never touches the color map, so it adds
     // real woven thickness and stitching without softening the design. --
     function shirtFabricBumpTexture(seed){
-      const size = 1024;
+      const size = 512;
+      const k = size / 1024; // scales fixed-pixel details so the look matches the 1024 version
       const c = document.createElement('canvas'); c.width = c.height = size;
       const ctx = c.getContext('2d');
       ctx.fillStyle = '#808080';
@@ -7179,7 +7185,7 @@ window.currentTheme = "halloween";
 
       // fine plain-weave crosshatch — heavier/coarser pitch than a thin
       // shirting fabric, reading as substantial heavyweight cotton jersey
-      const thread = 6.5;
+      const thread = 6.5 * k;
       for (let y = 0; y < size; y += thread) {
         const dark = (Math.floor(y / thread) % 2 === 0);
         const a = 0.20 + rnd() * 0.10;
@@ -7198,7 +7204,7 @@ window.currentTheme = "halloween";
         const fx = rnd() * size, fy = rnd() * size;
         const light = rnd() > 0.5;
         ctx.fillStyle = light ? `rgba(255,255,255,${0.05 + rnd()*0.06})` : `rgba(0,0,0,${0.05 + rnd()*0.06})`;
-        ctx.fillRect(fx, fy, 1.6, 1.6);
+        ctx.fillRect(fx, fy, 1.6 * k, 1.6 * k);
       }
 
       // -- stitched seams: real double-pass thread rows (raised pass +
@@ -7206,9 +7212,9 @@ window.currentTheme = "halloween";
       // placed at the collar rib, raglan shoulder seams, side seams, and
       // sleeve/hem cuffs of the garment silhouette. --
       function stitchLine(x1, y1, x2, y2, dash){
-        [ {w: 6.5, col:'rgba(0,0,0,0.55)', off:0}, {w: 3.5, col:'rgba(255,255,255,0.35)', off:2.6} ].forEach(pass=>{
+        [ {w: 6.5 * k, col:'rgba(0,0,0,0.55)', off:0}, {w: 3.5 * k, col:'rgba(255,255,255,0.35)', off:2.6 * k} ].forEach(pass=>{
           ctx.save();
-          ctx.setLineDash(dash || [7, 5]);
+          ctx.setLineDash((dash || [7, 5]).map(d => d * k));
           ctx.lineDashOffset = pass.off;
           ctx.lineWidth = pass.w;
           ctx.strokeStyle = pass.col;
@@ -7221,9 +7227,9 @@ window.currentTheme = "halloween";
         });
       }
       function stitchArc(cx, cy, r, a1, a2, dash){
-        [ {w: 6.5, col:'rgba(0,0,0,0.5)', off:0}, {w: 3.5, col:'rgba(255,255,255,0.32)', off:2.6} ].forEach(pass=>{
+        [ {w: 6.5 * k, col:'rgba(0,0,0,0.5)', off:0}, {w: 3.5 * k, col:'rgba(255,255,255,0.32)', off:2.6 * k} ].forEach(pass=>{
           ctx.save();
-          ctx.setLineDash(dash || [7, 5]);
+          ctx.setLineDash((dash || [7, 5]).map(d => d * k));
           ctx.lineDashOffset = pass.off;
           ctx.lineWidth = pass.w;
           ctx.strokeStyle = pass.col;
@@ -10211,6 +10217,31 @@ window.currentTheme = "halloween";
   }, 400);
 
   animate();
+
+  // Deferred PMREM environment: bake it once the first frame has been painted, then
+  // apply it to scene.environment and to the materials tagged for it, reproducing the
+  // same end state (including the reflective-presence nudge above) as the old
+  // synchronous setup.
+  function applyHDRIEnvironment(){
+    hdriEnvMap = makeHDRIEnvironment(renderer);
+    scene.environment = hdriEnvMap; // soft ambient/IBL for every PBR material in the room
+    scene.traverse((obj)=>{
+      if(!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((mat)=>{
+        if(!mat || !mat.userData || !mat.userData.hdriEnv || mat.envMap === hdriEnvMap) return;
+        mat.envMap = hdriEnvMap;
+        if(typeof mat.envMapIntensity === 'number'){
+          mat.envMapIntensity = Math.min(1.35, mat.envMapIntensity * 1.12);
+        }
+        mat.needsUpdate = true;
+      });
+    });
+  }
+  requestAnimationFrame(function(){
+    requestAnimationFrame(applyHDRIEnvironment);
+  });
+
   requestAnimationFrame(buildSnowstorm);
   // Start fetching the TV video only after the first scene frame has been
   // rendered and painted, so the room appears first.
