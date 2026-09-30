@@ -1190,7 +1190,7 @@ window.currentTheme = "halloween";
   // dragging and the TV video struggling to keep up — capped in line with
   // desktop's 2x instead. mobileDprWatchdog below still steps it down
   // further on devices that need it.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobilePerfTier ? 2 : 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = isMobilePerfTier ? THREE.PCFSoftShadowMap : THREE.VSMShadowMap;
@@ -1240,6 +1240,7 @@ window.currentTheme = "halloween";
   // renderer.render() path, so the page never breaks because of it.
   // Skipped on the mobile perf tier to protect frame rate — desktop/
   // tablet only, exactly like the MSAA decision above.
+  const BLOOM_RES_SCALE = 0.5; // bloom renders at half the main scene's resolution
   let composer = null, bloomComposer = null, bloomPass = null, finalPass = null;
   const postFXEnabled = !isMobilePerfTier && !!(window.THREE && THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass && THREE.ShaderPass);
   if(postFXEnabled){
@@ -1252,13 +1253,13 @@ window.currentTheme = "halloween";
       // hidden (toggled in renderFrame, right before this runs) and
       // blurs whatever's left over the threshold — i.e. only the room's
       // own screens/neon/lamps, never the moon or city skyline.
-      const bloomRT = new THREE.WebGLRenderTarget(rtSize.x * pr, rtSize.y * pr, { format: THREE.RGBAFormat });
+      const bloomRT = new THREE.WebGLRenderTarget(rtSize.x * pr * BLOOM_RES_SCALE, rtSize.y * pr * BLOOM_RES_SCALE, { format: THREE.RGBAFormat });
       bloomComposer = new THREE.EffectComposer(renderer, bloomRT);
       bloomComposer.addPass(new THREE.RenderPass(scene, camera));
       // Strength/radius up and threshold down from (0.55, 0.55, 0.82) so the
       // screens, neon sign, and hologram light bloom more assertively —
       // punchier highlights — without dragging in the mid-grey walls/floor.
-      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(rtSize.x, rtSize.y), 0.8, 0.5, 0.74);
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(rtSize.x, rtSize.y), 0.7, 0.5, 0.74);
       bloomComposer.addPass(bloomPass);
       bloomComposer.renderToScreen = false;
 
@@ -3062,8 +3063,8 @@ window.currentTheme = "halloween";
         const bottomMat = new THREE.MeshStandardMaterial({ map: bottomTex || topTex, roughness: 0.34, metalness: 0.02 });
         const mats = [cardEdgeMat, cardEdgeMat, topMat, bottomMat, cardEdgeMat, cardEdgeMat];
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(cardW, cardT, cardD), mats);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
         return mesh;
       }
 
@@ -3092,7 +3093,7 @@ window.currentTheme = "halloween";
         const boxMat = new THREE.MeshStandardMaterial({ color: 0x151310, roughness: 0.38, metalness: 0.06 });
         const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat);
         box.position.y = h/2;
-        box.castShadow = true; box.receiveShadow = true;
+        box.castShadow = false; box.receiveShadow = false;
         g.add(box);
         const lid = new THREE.Mesh(
           new THREE.PlaneGeometry(w*0.94, d*0.94),
@@ -4163,14 +4164,6 @@ window.currentTheme = "halloween";
     ctx.fill();
     return new THREE.CanvasTexture(c);
   }
-  const snowSpriteTex = makeSnowflakeTexture();
-  // Fewer flakes on the mobile perf tier, same ratio the leaves use above.
-  const snowCount = isMobilePerfTier ? 55 : 110;
-  const snowflakes = [];
-  const snowGroup = new THREE.Group();
-  snowGroup.position.z = 0.0019; // just in front of the leaf layer, still behind the frame/glass
-  windowGroup.add(snowGroup);
-
   // Inset well short of the window's actual half-width so there's room for
   // the per-flake wind lean below (which pushes flakes further sideways as
   // they fall) to fully fade out before a flake would otherwise reach the
@@ -4179,6 +4172,18 @@ window.currentTheme = "halloween";
   function pickSnowBaseX(){
     return (Math.random()*2 - 1) * snowHalfSpanX;
   }
+
+  // Built after the first rendered frame (see the call right after animate()
+  // below): the storm is fully transparent until the Christmas toggle fades
+  // it in, and the render loop already skips it while its refs are unset.
+  function buildSnowstorm(){
+  const snowSpriteTex = makeSnowflakeTexture();
+  // Fewer flakes on the mobile perf tier, same ratio the leaves use above.
+  const snowCount = isMobilePerfTier ? 55 : 110;
+  const snowflakes = [];
+  const snowGroup = new THREE.Group();
+  snowGroup.position.z = 0.0019; // just in front of the leaf layer, still behind the frame/glass
+  windowGroup.add(snowGroup);
 
   for(let i=0;i<snowCount;i++){
     // depth: 0 = far/back (small, slow, dim), 1 = near/front (large, fast, bright).
@@ -4252,6 +4257,7 @@ window.currentTheme = "halloween";
   snowGlow.position.set(0, -winH*0.12, 0.0017);
   windowGroup.add(snowGlow);
   windowSceneRefs.snowGlowMat = snowGlowMat;
+  }
 
   // ---------- Daytime clouds, drifting over the landscape photo ----------
   // The photo itself has clouds baked into its pixels, so they'd otherwise
@@ -4678,7 +4684,7 @@ window.currentTheme = "halloween";
     winLightPositions.forEach(p => {
       const pl = new THREE.PointLight(0xffdca0, 0, 0.9, 2.0);
       pl.position.set(p.x, p.y, winLightZ);
-      windowGroup.add(pl);
+      // windowGroup.add(pl); // disabled for performance: negligible contribution
       windowFrameChristmasLights.pointLights.push(pl);
     });
 
@@ -5360,7 +5366,7 @@ window.currentTheme = "halloween";
     const kbW = 0.44, kbD = 0.15, kbH = 0.022;
     const kbBase = new THREE.Mesh(new THREE.BoxGeometry(kbW, kbH, kbD), blackMat);
     kbBase.position.y = kbH/2;
-    kbBase.castShadow = true; kbBase.receiveShadow = true;
+    kbBase.castShadow = false; kbBase.receiveShadow = false;
     kbGroup.add(kbBase);
 
     const kbKeys = new THREE.Mesh(
@@ -5377,7 +5383,7 @@ window.currentTheme = "halloween";
     const mouseBody = new THREE.Mesh(new THREE.SphereGeometry(0.032, 16, 12), blackMat);
     mouseBody.scale.set(1, 0.62, 1.55);
     mouseBody.position.y = 0.032*0.62;
-    mouseBody.castShadow = true;
+    mouseBody.castShadow = false;
     mouseGroup.add(mouseBody);
 
     addContactShadow(setup, kbGroup.position.x, kbGroup.position.z, kbW*0.75, kbD*0.9, 0.4);
@@ -5405,11 +5411,11 @@ window.currentTheme = "halloween";
         const w = 0.145, h = 0.014, d = 0.20;
         const pages = new THREE.Mesh(new THREE.BoxGeometry(w - 0.004, h - 0.004, d - 0.004), notebookPageMat);
         pages.position.y = h/2;
-        pages.castShadow = true; pages.receiveShadow = true;
+        pages.castShadow = false; pages.receiveShadow = false;
         g.add(pages);
         const cover = new THREE.Mesh(new THREE.BoxGeometry(w, h*0.35, d), notebookCoverMat);
         cover.position.y = h - (h*0.35)/2;
-        cover.castShadow = true; cover.receiveShadow = true;
+        cover.castShadow = false; cover.receiveShadow = false;
         g.add(cover);
         g.position.set(x, deskSurfY, z);
         g.rotation.y = rotY || 0;
@@ -5424,7 +5430,7 @@ window.currentTheme = "halloween";
         const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len*0.82, 10), penBodyMat);
         body.rotation.z = Math.PI/2;
         body.position.x = -len*0.09;
-        body.castShadow = true;
+        body.castShadow = false;
         g.add(body);
         const tip = new THREE.Mesh(new THREE.ConeGeometry(r*0.95, len*0.18, 10), penTipMat);
         tip.rotation.z = -Math.PI/2;
@@ -5445,7 +5451,7 @@ window.currentTheme = "halloween";
         const r = 0.032, h = 0.075;
         const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.9, h, 22), deskMugMat);
         body.position.y = h/2;
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = false; body.receiveShadow = false;
         g.add(body);
         const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(r*0.83, r*0.83, 0.004, 22), deskMugInMat);
         rimIn.position.y = h - 0.002;
@@ -5453,7 +5459,7 @@ window.currentTheme = "halloween";
         const handle = new THREE.Mesh(new THREE.TorusGeometry(0.021, 0.0055, 8, 16, Math.PI*1.3), deskMugMat);
         handle.rotation.z = Math.PI/2;
         handle.position.set(r + 0.008, h/2, 0);
-        handle.castShadow = true;
+        handle.castShadow = false;
         g.add(handle);
         g.position.set(x, deskSurfY, z);
         parent.add(g);
@@ -5468,7 +5474,7 @@ window.currentTheme = "halloween";
         const base = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), airpodsCaseMat);
         base.scale.set(1.4, 0.62, 1.0);
         base.position.y = r*0.62;
-        base.castShadow = true; base.receiveShadow = true;
+        base.castShadow = false; base.receiveShadow = false;
         g.add(base);
         const topY = r*0.62*2;
         const seam = new THREE.Mesh(new THREE.BoxGeometry(r*2*1.36, 0.0015, r*1.98), airpodsSeamMat);
@@ -5514,7 +5520,7 @@ window.currentTheme = "halloween";
         const boxMat = new THREE.MeshStandardMaterial({ color: 0x16140f, roughness: 0.4, metalness: 0.05 });
         const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat);
         box.position.y = h/2;
-        box.castShadow = true; box.receiveShadow = true;
+        box.castShadow = false; box.receiveShadow = false;
         g.add(box);
         const lid = new THREE.Mesh(
           new THREE.PlaneGeometry(w*0.9, d*0.9),
@@ -5527,7 +5533,7 @@ window.currentTheme = "halloween";
         const looseCard = new THREE.Mesh(new THREE.BoxGeometry(w*0.92, 0.0015, d*0.9), new THREE.MeshStandardMaterial({ color: 0xf4efe2, roughness: 0.55 }));
         looseCard.position.set(0.006, h + 0.0012, d*0.06);
         looseCard.rotation.y = 0.05;
-        looseCard.castShadow = true;
+        looseCard.castShadow = false;
         g.add(looseCard);
         g.position.set(x, deskSurfY, z);
         g.rotation.y = rotY || 0;
@@ -5541,7 +5547,7 @@ window.currentTheme = "halloween";
         const w = 0.075, h = 0.008, d = 0.155;
         const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), phoneBodyMat);
         body.position.y = h/2;
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = false; body.receiveShadow = false;
         g.add(body);
         const screen = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.006, d - 0.006), phoneScreenMat);
         screen.rotation.x = -Math.PI/2;
@@ -5633,7 +5639,7 @@ window.currentTheme = "halloween";
 
       const phoneBody = new THREE.Mesh(new THREE.BoxGeometry(phoneW, phoneH, phoneD), phoneFrameMat);
       phoneBody.position.y = phoneH/2;
-      phoneBody.castShadow = true; phoneBody.receiveShadow = true;
+      phoneBody.castShadow = false; phoneBody.receiveShadow = false;
       phoneGroup.add(phoneBody);
 
       // Thin bright edge band, inset from the frame's outline — the same
@@ -5661,7 +5667,7 @@ window.currentTheme = "halloween";
       // device rather than a static prop.
       const phoneLight = new THREE.PointLight(0xffd8a0, 0.16, 0.32, 2);
       phoneLight.position.set(phoneX, phoneSurfY + 0.05, phoneZ);
-      setup.add(phoneLight);
+      // setup.add(phoneLight); // disabled for performance: negligible contribution
 
       addContactShadow(setup, phoneX, phoneZ, phoneW*0.95, phoneD*0.62, 0.4);
 
@@ -5915,18 +5921,18 @@ window.currentTheme = "halloween";
       const clampZ = -0.08;
       const clampTop = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.018, 0.09), jointMat);
       clampTop.position.set(localX, deskTopY - monY + 0.009, clampZ);
-      clampTop.castShadow = true;
+      clampTop.castShadow = false;
       g.add(clampTop);
       const clampBody = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.06), jointMat);
       clampBody.position.set(localX, deskTopY - monY - 0.03, clampZ - 0.02);
-      clampBody.castShadow = true;
+      clampBody.castShadow = false;
       g.add(clampBody);
 
       const riserBaseY = deskTopY - monY + 0.02;
       const riserTopY  = -0.06;
       const riser = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, riserTopY - riserBaseY, 12), metalMat);
       riser.position.set(localX, (riserBaseY+riserTopY)/2, clampZ);
-      riser.castShadow = true;
+      riser.castShadow = false;
       g.add(riser);
 
       const jointA = new THREE.Mesh(new THREE.SphereGeometry(0.024, 12, 10), jointMat);
@@ -6058,7 +6064,7 @@ window.currentTheme = "halloween";
     const sleeveH = deskTopY - 0.05;
     const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, sleeveH, 10), new THREE.MeshStandardMaterial({ color: 0x2c2c2e, roughness: 0.95 }));
     sleeve.position.set(grommetX, sleeveH/2 + 0.03, grommetZ - 0.03);
-    sleeve.castShadow = true;
+    sleeve.castShadow = false;
     setup.add(sleeve);
 
     const tray = new THREE.Mesh(
@@ -6066,7 +6072,7 @@ window.currentTheme = "halloween";
       new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.7, metalness: 0.2, side: THREE.DoubleSide })
     );
     tray.position.set(grommetX, deskTopY - 0.14, grommetZ - 0.03);
-    tray.castShadow = true;
+    tray.castShadow = false;
     setup.add(tray);
 
     // Soft drooping cables from each monitor's clamp down into the grommet
@@ -6079,7 +6085,7 @@ window.currentTheme = "halloween";
       const end   = new THREE.Vector3(grommetX, deskTopY + deskThick/2, grommetZ);
       const curve = new THREE.CatmullRomCurve3([start, mid, end]);
       const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.006, 6, false), cableMat);
-      tube.castShadow = true;
+      tube.castShadow = false;
       setup.add(tube);
     });
 
@@ -6346,11 +6352,11 @@ window.currentTheme = "halloween";
         const g = new THREE.Group();
         const w = 0.15, h = 0.018, d = 0.20;
         const cover = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), studioPaperMat);
-        cover.castShadow = true; cover.receiveShadow = true;
+        cover.castShadow = false; cover.receiveShadow = false;
         g.add(cover);
         const spine = new THREE.Mesh(new THREE.BoxGeometry(0.016, h + 0.004, d), studioBindingMat);
         spine.position.set(-w/2 + 0.009, 0, 0);
-        spine.castShadow = true;
+        spine.castShadow = false;
         g.add(spine);
         g.position.set(x, y + h/2, z);
         g.rotation.y = rotY || 0;
@@ -6361,11 +6367,11 @@ window.currentTheme = "halloween";
       function addPlant(parent, x, z, y){
         const g = new THREE.Group();
         const potH = 0.052, potR = 0.033;
-        const pot = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.82, potR, potH, 16), studioPotMat);
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.82, potR, potH, 10), studioPotMat);
         pot.position.set(0, potH/2, 0);
-        pot.castShadow = true; pot.receiveShadow = true;
+        pot.castShadow = false; pot.receiveShadow = false;
         g.add(pot);
-        const rim = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.86, potR*0.86, 0.006, 16), studioPotMat);
+        const rim = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.86, potR*0.86, 0.006, 10), studioPotMat);
         rim.position.set(0, potH - 0.002, 0);
         g.add(rim);
         const leaves = [
@@ -6375,10 +6381,10 @@ window.currentTheme = "halloween";
           [0.004, 0.095, -0.016, 0.026, studioLeafMatB]
         ];
         leaves.forEach(p=>{
-          const leaf = new THREE.Mesh(new THREE.SphereGeometry(p[3], 10, 10), p[4]);
+          const leaf = new THREE.Mesh(new THREE.SphereGeometry(p[3], 8, 6), p[4]);
           leaf.position.set(p[0], potH + p[1] - 0.03, p[2]);
           leaf.scale.set(1, 1.25, 1);
-          leaf.castShadow = true;
+          leaf.castShadow = false;
           g.add(leaf);
         });
         g.position.set(x, y, z);
@@ -6391,23 +6397,23 @@ window.currentTheme = "halloween";
         const bw = 0.10, bh = 0.046, bd = 0.076;
         const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), studioBodyMat);
         body.position.set(0, bh/2, 0);
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = false; body.receiveShadow = false;
         g.add(body);
         const topPlate = new THREE.Mesh(new THREE.BoxGeometry(bw*0.98, 0.006, bd*0.98), studioBrassMat);
         topPlate.position.set(0, bh + 0.003, 0);
         g.add(topPlate);
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.029, 0.05, 20), studioLensMat);
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.029, 0.05, 10), studioLensMat);
         barrel.rotation.x = Math.PI/2;
         barrel.position.set(0, bh/2, bd/2 + 0.025);
-        barrel.castShadow = true;
+        barrel.castShadow = false;
         g.add(barrel);
-        const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.004, 20), studioGlassMat);
+        const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.004, 10), studioGlassMat);
         glass.rotation.x = Math.PI/2;
         glass.position.set(0, bh/2, bd/2 + 0.051);
         g.add(glass);
         const vf = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.014, 0.018), studioBodyMat);
         vf.position.set(0, bh + 0.007, -bd/2 + 0.016);
-        vf.castShadow = true;
+        vf.castShadow = false;
         g.add(vf);
         g.position.set(x, y, z);
         g.rotation.y = rotY || 0;
@@ -6418,12 +6424,12 @@ window.currentTheme = "halloween";
       function addLooseLens(parent, x, z, y, rotY){
         const g = new THREE.Group();
         const r = 0.026, len = 0.072;
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.9, len, 20), studioLensMat);
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.9, len, 10), studioLensMat);
         barrel.rotation.z = Math.PI/2;
         barrel.position.set(0, r, 0);
-        barrel.castShadow = true; barrel.receiveShadow = true;
+        barrel.castShadow = false; barrel.receiveShadow = false;
         g.add(barrel);
-        const glass = new THREE.Mesh(new THREE.CylinderGeometry(r*0.78, r*0.78, 0.004, 20), studioGlassMat);
+        const glass = new THREE.Mesh(new THREE.CylinderGeometry(r*0.78, r*0.78, 0.004, 10), studioGlassMat);
         glass.rotation.z = Math.PI/2;
         glass.position.set(len/2, r, 0);
         g.add(glass);
@@ -6440,17 +6446,17 @@ window.currentTheme = "halloween";
       function addMug(parent, x, z, y){
         const g = new THREE.Group();
         const r = 0.028, h = 0.06;
-        const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.92, h, 20), studioMugMat);
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.92, h, 10), studioMugMat);
         body.position.set(0, h/2, 0);
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = false; body.receiveShadow = false;
         g.add(body);
-        const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(r*0.82, r*0.82, 0.004, 20), studioMugInMat);
+        const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(r*0.82, r*0.82, 0.004, 10), studioMugInMat);
         rimIn.position.set(0, h - 0.002, 0);
         g.add(rimIn);
         const handle = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.005, 8, 16, Math.PI*1.3), studioMugMat);
         handle.rotation.z = Math.PI/2;
         handle.position.set(r + 0.006, h/2, 0);
-        handle.castShadow = true;
+        handle.castShadow = false;
         g.add(handle);
         g.position.set(x, y, z);
         parent.add(g);
@@ -6461,10 +6467,10 @@ window.currentTheme = "halloween";
         const g = new THREE.Group();
         const cupR = 0.028, cupH = 0.015, span = 0.085;
         [-1, 1].forEach(side=>{
-          const cup = new THREE.Mesh(new THREE.CylinderGeometry(cupR, cupR, cupH, 18), studioLeatherMat);
+          const cup = new THREE.Mesh(new THREE.CylinderGeometry(cupR, cupR, cupH, 10), studioLeatherMat);
           cup.rotation.z = Math.PI/2;
           cup.position.set(side*span, cupR, 0);
-          cup.castShadow = true; cup.receiveShadow = true;
+          cup.castShadow = false; cup.receiveShadow = false;
           g.add(cup);
           const ring = new THREE.Mesh(new THREE.TorusGeometry(cupR*0.82, 0.003, 8, 16), studioBrassMat);
           ring.rotation.y = Math.PI/2;
@@ -6473,7 +6479,7 @@ window.currentTheme = "halloween";
         });
         const band = new THREE.Mesh(new THREE.TorusGeometry(span, 0.006, 8, 24, Math.PI), studioLeatherMat);
         band.position.set(0, cupR*2 - 0.006, 0);
-        band.castShadow = true;
+        band.castShadow = false;
         g.add(band);
         g.position.set(x, y, z);
         g.rotation.y = rotY || 0;
@@ -6527,7 +6533,7 @@ window.currentTheme = "halloween";
         g.add(torso);
 
         // pale belly patch
-        const belly = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12), puppetBellyMat);
+        const belly = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8), puppetBellyMat);
         belly.scale.set(1, 1.1, 0.55);
         belly.position.set(0, 0.06, 0.045);
         g.add(belly);
@@ -6545,11 +6551,11 @@ window.currentTheme = "halloween";
           stalk.position.set(side*0.032, 0.215, 0.03);
           stalk.rotation.x = -0.3;
           g.add(stalk);
-          const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.02, 14, 12), puppetEyeWhiteMat);
+          const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 8), puppetEyeWhiteMat);
           eyeWhite.position.set(side*0.032, 0.235, 0.045);
           eyeWhite.scale.set(1, 1, 0.7);
           g.add(eyeWhite);
-          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.009, 10, 8), puppetPupilMat);
+          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), puppetPupilMat);
           pupil.position.set(side*0.032, 0.238, 0.058);
           g.add(pupil);
         });
@@ -6593,7 +6599,7 @@ window.currentTheme = "halloween";
           legGroup.add(shin);
 
           // webbed foot
-          const foot = new THREE.Mesh(new THREE.SphereGeometry(0.02, 12, 10), puppetBodyMat);
+          const foot = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), puppetBodyMat);
           foot.scale.set(1, 0.5, 1.6);
           foot.position.set(0, -0.155, 0.14);
           foot.castShadow = true;
@@ -6644,24 +6650,24 @@ window.currentTheme = "halloween";
         const g = new THREE.Group();
         const sole = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.016, 0.19), swSoleMat);
         sole.position.set(0, 0.008, 0);
-        sole.castShadow = true; sole.receiveShadow = true;
+        sole.castShadow = true; sole.receiveShadow = false;
         g.add(sole);
 
-        const upper = new THREE.Mesh(new THREE.SphereGeometry(0.042, 16, 12), swUpperMat);
+        const upper = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 10), swUpperMat);
         upper.scale.set(1.0, 0.62, 1.65);
         upper.position.set(0, 0.034, -0.01);
-        upper.castShadow = true; upper.receiveShadow = true;
+        upper.castShadow = true; upper.receiveShadow = false;
         g.add(upper);
 
-        const toe = new THREE.Mesh(new THREE.SphereGeometry(0.032, 14, 10), swUpperMat2);
+        const toe = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), swUpperMat2);
         toe.scale.set(0.95, 0.55, 0.85);
         toe.position.set(0, 0.026, 0.085);
-        toe.castShadow = true;
+        toe.castShadow = false;
         g.add(toe);
 
         const heelCap = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.05, 0.03), swAccentMat);
         heelCap.position.set(0, 0.03, -0.085);
-        heelCap.castShadow = true;
+        heelCap.castShadow = false;
         g.add(heelCap);
 
         const tongue = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.012), swLaceMat);
@@ -6693,11 +6699,11 @@ window.currentTheme = "halloween";
         const g = new THREE.Group();
         const base = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.028, 0.12), swHoodieMatA);
         base.position.set(0, 0.014, 0);
-        base.castShadow = true; base.receiveShadow = true;
+        base.castShadow = true; base.receiveShadow = false;
         g.add(base);
         const top = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.024, 0.105), swHoodieMatB);
         top.position.set(0, 0.014 + 0.026, -0.004);
-        top.castShadow = true; top.receiveShadow = true;
+        top.castShadow = true; top.receiveShadow = false;
         g.add(top);
         [-1, 1].forEach(side=>{
           const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.045, 6), swLaceMat);
@@ -6713,17 +6719,17 @@ window.currentTheme = "halloween";
       // -- snapback cap: domed crown + flat brim + contrast front panel --
       function addSnapbackCap(parent, x, z, y, rotY){
         const g = new THREE.Group();
-        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.05, 18, 12, 0, Math.PI*2, 0, Math.PI/2), swCapMat);
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8, 0, Math.PI*2, 0, Math.PI/2), swCapMat);
         crown.position.set(0, 0.026, 0);
-        crown.castShadow = true; crown.receiveShadow = true;
+        crown.castShadow = true; crown.receiveShadow = false;
         g.add(crown);
         const panel = new THREE.Mesh(new THREE.CircleGeometry(0.018, 16), swCapPanelMat);
         panel.position.set(0, 0.03, 0.045);
         panel.rotation.y = 0;
         g.add(panel);
-        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.006, 20, 1, false, -Math.PI*0.42, Math.PI*0.84), swCapMat);
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.006, 12, 1, false, -Math.PI*0.42, Math.PI*0.84), swCapMat);
         brim.position.set(0, 0.014, 0.04);
-        brim.castShadow = true;
+        brim.castShadow = false;
         g.add(brim);
         g.position.set(x, y, z);
         g.rotation.y = rotY || 0;
@@ -6733,13 +6739,13 @@ window.currentTheme = "halloween";
       // -- ribbed beanie, sitting slightly slouched --
       function addBeanie(parent, x, z, y){
         const g = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.SphereGeometry(0.046, 16, 12, 0, Math.PI*2, 0, Math.PI*0.62), swBeanieMat);
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.046, 12, 8, 0, Math.PI*2, 0, Math.PI*0.62), swBeanieMat);
         body.position.set(0, 0.03, 0);
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = true; body.receiveShadow = false;
         g.add(body);
-        const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.044, 0.018, 16), swBeanieMat);
+        const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.044, 0.018, 10), swBeanieMat);
         cuff.position.set(0, 0.012, 0);
-        cuff.castShadow = true;
+        cuff.castShadow = false;
         g.add(cuff);
         g.position.set(x, y, z);
         parent.add(g);
@@ -6748,15 +6754,15 @@ window.currentTheme = "halloween";
       // -- spray paint can, small graffiti-culture nod on the shelf --
       function addSprayCan(parent, x, z, y, rotY){
         const g = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.09, 18), swCanBodyMat);
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.09, 10), swCanBodyMat);
         body.position.set(0, 0.045, 0);
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = true; body.receiveShadow = false;
         g.add(body);
-        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, 0.02, 18), swCanCapMat);
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, 0.02, 10), swCanCapMat);
         cap.position.set(0, 0.10, 0);
-        cap.castShadow = true;
+        cap.castShadow = false;
         g.add(cap);
-        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.01, 10), swCanCapMat);
+        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.01, 8), swCanCapMat);
         nozzle.position.set(0, 0.115, 0);
         g.add(nozzle);
         g.position.set(x, y, z);
@@ -6767,14 +6773,14 @@ window.currentTheme = "halloween";
       // -- small collectible vinyl toy figure — rounded body, blocky head --
       function addVinylToy(parent, x, z, y, rotY){
         const g = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.SphereGeometry(0.024, 14, 12), swToyBodyMat);
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), swToyBodyMat);
         body.scale.set(1, 1.4, 1);
         body.position.set(0, 0.038, 0);
-        body.castShadow = true; body.receiveShadow = true;
+        body.castShadow = true; body.receiveShadow = false;
         g.add(body);
         const head = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.03, 0.034), swToyHeadMat);
         head.position.set(0, 0.072, 0);
-        head.castShadow = true;
+        head.castShadow = false;
         g.add(head);
         g.position.set(x, y, z);
         g.rotation.y = rotY || 0;
@@ -6962,8 +6968,8 @@ window.currentTheme = "halloween";
         bead.rotation.x = Math.PI/2;
         bead.rotation.z = Math.random()*Math.PI;
       }
-      bead.castShadow = true;
-      bead.receiveShadow = true;
+      bead.castShadow = false;
+      bead.receiveShadow = false;
       parent.add(bead);
     }
 
@@ -7012,23 +7018,23 @@ window.currentTheme = "halloween";
 
       // corner fitting — a rounded knuckle joining post to top rail,
       // the classic pipe-fitting hardware of a well-made boutique rack
-      const corner = new THREE.Mesh(new THREE.SphereGeometry(barR*1.85, 22, 22), brassMat);
+      const corner = new THREE.Mesh(new THREE.SphereGeometry(barR*1.85, 12, 10), brassMat);
       corner.position.set(0, rackHeight, z);
-      corner.castShadow = true;
+      corner.castShadow = false;
       rackGroup.add(corner);
       // weld seam where the post meets the corner knuckle
       addWeldBead(rackGroup, new THREE.Vector3(0, rackHeight - barR*1.4, z), barR*1.05, barR*0.22);
 
       // slim collar just below the corner, like a threaded sleeve
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.28, barR*1.28, 0.045, 20), brassMat);
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.28, barR*1.28, 0.045, 12), brassMat);
       collar.position.set(0, postTopY - 0.05, z);
-      collar.castShadow = true;
+      collar.castShadow = false;
       rackGroup.add(collar);
 
       // collar at the shelf line, where the cross rail meets the post
-      const shelfCollar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.3, barR*1.3, 0.04, 20), brassMat);
+      const shelfCollar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.3, barR*1.3, 0.04, 12), brassMat);
       shelfCollar.position.set(0, shelfY, z);
-      shelfCollar.castShadow = true;
+      shelfCollar.castShadow = false;
       rackGroup.add(shelfCollar);
       addWeldBead(rackGroup, new THREE.Vector3(0, shelfY, z), barR*1.32, barR*0.16);
 
@@ -7051,7 +7057,7 @@ window.currentTheme = "halloween";
         // weld seam where the ferrule is fitted onto the foot
         addWeldBead(rackGroup, footMid, barR*0.75, barR*0.14);
 
-        const pad = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.15, barR*1.15, 0.01, 16), brassMat);
+        const pad = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.15, barR*1.15, 0.01, 10), brassMat);
         pad.position.set(footBottom.x, 0.005, footBottom.z);
         rackGroup.add(pad);
 
@@ -7251,7 +7257,7 @@ window.currentTheme = "halloween";
       const mesh = new THREE.Mesh(geo, shirtHangerMat);
       mesh.position.copy(new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5));
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
-      mesh.castShadow = true;
+      mesh.castShadow = false;
       return mesh;
     }
 
@@ -7275,7 +7281,7 @@ window.currentTheme = "halloween";
       const hookCurl = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.0055, 8, 14, Math.PI*1.3), shirtHangerMat);
       hookCurl.position.set(0, hookTopY - 0.006, 0);
       hookCurl.rotation.z = Math.PI * 0.15;
-      hookCurl.castShadow = true;
+      hookCurl.castShadow = false;
       hg.add(hookCurl);
 
       // neck: hook base down to the peak of the triangular frame
@@ -7557,7 +7563,7 @@ window.currentTheme = "halloween";
   sun.position.set(halfW + 3.2, winCenterY + 1.4, winCenterZ + 1.6);
   sun.target.position.set(-halfW*0.3, 0, winCenterZ - 1.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(isMobilePerfTier ? 1024 : 2048, isMobilePerfTier ? 1024 : 2048);
+  sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = -5.5; sun.shadow.camera.right = 5.5;
   sun.shadow.camera.top = 5.5;   sun.shadow.camera.bottom = -5.5;
   sun.shadow.camera.near = 0.5;  sun.shadow.camera.far = 14;
@@ -7803,24 +7809,24 @@ window.currentTheme = "halloween";
     const bodyW = 0.132, bodyH = 0.088, bodyD = 0.048;
     const camBody = new THREE.Mesh(new THREE.BoxGeometry(bodyW, bodyH, bodyD), camBodyMat);
     camBody.position.y = bodyH/2;
-    camBody.castShadow = true; camBody.receiveShadow = true;
+    camBody.castShadow = false; camBody.receiveShadow = false;
     camGroup.add(camBody);
 
     // Rubberized grip, front-right corner
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.03, bodyH*0.92, bodyD*0.9), camGripMat);
     grip.position.set(bodyW/2 - 0.012, bodyH/2, 0);
-    grip.castShadow = true;
+    grip.castShadow = false;
     camGroup.add(grip);
 
     // Brushed top plate with mode dial and shutter button
     const topPlate = new THREE.Mesh(new THREE.BoxGeometry(bodyW*0.98, 0.01, bodyD*0.9), camPlateMat);
     topPlate.position.y = bodyH + 0.005;
-    topPlate.castShadow = true;
+    topPlate.castShadow = false;
     camGroup.add(topPlate);
 
     const modeDial = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.008, 20), camRingMat);
     modeDial.position.set(-bodyW*0.22, bodyH + 0.011, 0.005);
-    modeDial.castShadow = true;
+    modeDial.castShadow = false;
     camGroup.add(modeDial);
 
     const shutterBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.006, 12), camAccentMat);
@@ -7830,7 +7836,7 @@ window.currentTheme = "halloween";
     // Small EVF hump, centered on the back
     const evf = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.018, 0.03), camBodyMat);
     evf.position.set(-0.01, bodyH + 0.009, -bodyD*0.12);
-    evf.castShadow = true;
+    evf.castShadow = false;
     camGroup.add(evf);
 
     // Lens mount ring flush against the front face
@@ -7847,7 +7853,7 @@ window.currentTheme = "halloween";
 
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.030, lensLen, 24), camBarrelMat);
     barrel.rotation.x = Math.PI/2;
-    barrel.castShadow = true; barrel.receiveShadow = true;
+    barrel.castShadow = false; barrel.receiveShadow = false;
     lensGroup.add(barrel);
 
     const focusRing = new THREE.Mesh(new THREE.CylinderGeometry(0.0285, 0.0285, 0.016, 24, 1, false), camRingMat);
@@ -7876,7 +7882,7 @@ window.currentTheme = "halloween";
     const strapEnd    = new THREE.Vector3(-bodyW/2 - 0.02, 0.002, bodyD*0.85);
     const strapCurve = new THREE.CatmullRomCurve3([strapStart, strapMid, strapEnd]);
     const strapTube = new THREE.Mesh(new THREE.TubeGeometry(strapCurve, 14, 0.009, 6, false), camStrapMat);
-    strapTube.castShadow = true;
+    strapTube.castShadow = false;
     camGroup.add(strapTube);
 
     addContactShadow(room, camX, camZ, 0.16, 0.11, 0.55);
@@ -8191,8 +8197,8 @@ window.currentTheme = "halloween";
     if(composer){
       const pr = renderer.getPixelRatio();
       composer.setSize(window.innerWidth * pr, window.innerHeight * pr);
-      if(bloomComposer) bloomComposer.setSize(window.innerWidth * pr, window.innerHeight * pr);
-      if(bloomPass) bloomPass.setSize(window.innerWidth * pr, window.innerHeight * pr);
+      if(bloomComposer) bloomComposer.setSize(window.innerWidth * pr * BLOOM_RES_SCALE, window.innerHeight * pr * BLOOM_RES_SCALE);
+      if(bloomPass) bloomPass.setSize(window.innerWidth * pr * BLOOM_RES_SCALE, window.innerHeight * pr * BLOOM_RES_SCALE);
       if(finalPass) finalPass.uniforms.tBloom.value = bloomComposer.renderTarget2.texture;
     }
   }
@@ -9472,6 +9478,10 @@ window.currentTheme = "halloween";
   // ---------- Animate ----------
   const clock = new THREE.Clock();
   let rafHandle = null;
+  // Per-frame caches for the Enter/Instagram button overlay (see animate()).
+  const enterBtnProjVec = new THREE.Vector3();
+  let lastBtnFilter = null;
+  let lastBtnDisplay = null;
   function animate(){
     rafHandle = requestAnimationFrame(animate);
     const dt = clock.getDelta();
@@ -10034,8 +10044,17 @@ window.currentTheme = "halloween";
       // staying pooled tight under the table.
       tableUnderGlowLight.distance = 1.4 + hoverEase*0.9;
     }
-    if(enterBtn) enterBtn.style.filter = `brightness(${(1 + hoverEase*1.0).toFixed(3)})`;
-    if(instagramBtn) instagramBtn.style.filter = `brightness(${(1 + hoverEase*1.0).toFixed(3)})`;
+    // Only touch the buttons' inline style when the value actually changed
+    // (hoverEase sits at 0 on almost every frame), instead of rebuilding
+    // the string and rewriting the style every frame.
+    if(enterBtn || instagramBtn){
+      const btnFilter = `brightness(${(1 + hoverEase*1.0).toFixed(3)})`;
+      if(btnFilter !== lastBtnFilter){
+        lastBtnFilter = btnFilter;
+        if(enterBtn) enterBtn.style.filter = btnFilter;
+        if(instagramBtn) instagramBtn.style.filter = btnFilter;
+      }
+    }
 
     // Same hover brightening applied to the 3 monitors and the TV's own
     // screen-glow overlay, pushed further than the table's own glow — the
@@ -10091,19 +10110,23 @@ window.currentTheme = "halloween";
     // display:none set by startEnterSequence() and make the buttons
     // reappear mid-dive.
     if(enterBtn && !entering){
-      const p = enterButtonAnchor.clone().project(camera);
+      const p = enterBtnProjVec.copy(enterButtonAnchor).project(camera);
       if(p.z < 1){
         const leftPx = (p.x * 0.5 + 0.5) * window.innerWidth;
         const topPx  = (1 - (p.y * 0.5 + 0.5)) * window.innerHeight;
-        enterBtn.style.display = 'block';
+        if(lastBtnDisplay !== 'block'){
+          lastBtnDisplay = 'block';
+          enterBtn.style.display = 'block';
+          if(instagramBtn) instagramBtn.style.display = 'block';
+        }
         enterBtn.style.left = leftPx + 'px';
         enterBtn.style.top  = topPx + 'px';
         if(instagramBtn){
-          instagramBtn.style.display = 'block';
           instagramBtn.style.left = leftPx + 'px';
           instagramBtn.style.top  = (topPx - 68) + 'px';
         }
-      } else {
+      } else if(lastBtnDisplay !== 'none'){
+        lastBtnDisplay = 'none';
         enterBtn.style.display = 'none';
         if(instagramBtn) instagramBtn.style.display = 'none';
       }
@@ -10146,7 +10169,7 @@ window.currentTheme = "halloween";
   //      reflective presence (envMapIntensity) so metal/lacquer/glass
   //      surfaces pick up believable room reflections rather than reading
   //      flat, while plain matte materials are left untouched.
-  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  const maxAniso = Math.min(2, renderer.capabilities.getMaxAnisotropy());
   scene.traverse((obj)=>{
     if(!obj.isMesh || !obj.material) return;
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
@@ -10154,7 +10177,7 @@ window.currentTheme = "halloween";
       if(!mat) return;
       ['map','normalMap','roughnessMap','metalnessMap','aoMap','bumpMap'].forEach((slot)=>{
         const tex = mat[slot];
-        if(tex && tex.isTexture && tex.anisotropy < maxAniso){
+        if(tex && tex.isTexture && tex.anisotropy !== maxAniso){
           tex.anisotropy = maxAniso;
         }
       });
@@ -10174,6 +10197,7 @@ window.currentTheme = "halloween";
   }, 400);
 
   animate();
+  requestAnimationFrame(buildSnowstorm);
 
   // ---------- Pause rendering while the tab is hidden ----------
   // The render loop above runs continuously by design (camera drift, dust
