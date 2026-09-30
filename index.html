@@ -797,11 +797,10 @@
   </span>
 </button>
 
-<!-- Not needed until the visitor clicks the remote to power on the TV
-     (see turnOnTV() in the main scene script), so these stay
-     unloaded at page-load time rather than competing with the
-     essential 3D scene for bandwidth. -->
-<video id="tvVideo" src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="auto" style="display:none;"></video>
+<!-- The TV video's src is attached only after the first scene frame has
+     rendered (see startTvVideoLoad() in the main scene script), so it
+     doesn't compete with the essential 3D scene for bandwidth at startup. -->
+<video id="tvVideo" data-src="2026-07-10%2017-44-55%20-%20Trim.mp4" loop muted playsinline webkit-playsinline preload="none" style="display:none;"></video>
 <audio id="bgMusic" src="intro-music.mp3" loop preload="none" style="display:none;"></audio>
 
 <div id="enterTransition" aria-hidden="true">
@@ -5888,10 +5887,25 @@ window.currentTheme = "halloween";
     // Called the moment the remote's on-screen "press" lands (automatically,
     // on page load). Fades the screen in and starts the muted TV video and
     // its accompanying sound track together.
+    // The MP4 is only attached/fetched once the first scene frame has been
+    // rendered (see the animate() kick-off), so it never competes with the
+    // initial Three.js startup. Idempotent; turnOnTV also calls it as a
+    // safety net so activation behaves exactly as before.
+    function startTvVideoLoad(){
+      if(tvVideoEl.getAttribute('src')) return;
+      const src = tvVideoEl.getAttribute('data-src');
+      if(!src) return;
+      tvVideoEl.preload = 'auto';
+      tvVideoEl.src = src;
+      tvVideoEl.load();
+    }
+    window.__startTvVideoLoad = startTvVideoLoad;
+
     function turnOnTV(t){
       if(tvPoweredOn) return;
       tvPoweredOn = true;
       tvPowerOnStartTime = t;
+      startTvVideoLoad();
       playWithGestureFallback(tvVideoEl);
       if(bgMusicEl) playWithGestureFallback(bgMusicEl);
     }
@@ -10198,6 +10212,13 @@ window.currentTheme = "halloween";
 
   animate();
   requestAnimationFrame(buildSnowstorm);
+  // Start fetching the TV video only after the first scene frame has been
+  // rendered and painted, so the room appears first.
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      if(window.__startTvVideoLoad) window.__startTvVideoLoad();
+    });
+  });
 
   // ---------- Pause rendering while the tab is hidden ----------
   // The render loop above runs continuously by design (camera drift, dust
