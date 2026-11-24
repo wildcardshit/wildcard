@@ -1,0 +1,9404 @@
+(function(){
+
+  // ---------- Small shared helpers (dedupe of logic that used to be
+  // copy-pasted at each call site with identical bodies) ----------
+
+  // Tiny deterministic PRNG (same LCG previously redefined inline wherever
+  // a texture generator needed seeded randomness, so repeated runs produce
+  // the same "random" wrinkles/flecks/etc). Returns a 0..1 generator
+  // function; each caller gets its own independent state via `s`.
+  function makeSeededRng(seed){
+    let s = seed;
+    return function(){ s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  }
+
+  // Reference to the desk chair group, set once it's built below, so the
+  // render loop can slowly swivel it left/right.
+  let deskChairGroup = null;
+  let deskChairBaseYaw = 0;
+
+  // Reference to the modern smartphone resting on the desk, set once it's
+  // built below. Not animated today, but kept as a named group (with its
+  // own lit screen already wired into the shared screenGlowRefs system) so
+  // it's ready to be picked up as a camera target later.
+  let modernPhoneGroup = null;
+  // Reference to the phone's actual screen mesh (a child of modernPhoneGroup),
+  // set once it's built below — used, together with modernPhoneGroup, to
+  // resolve exactly where the screen surface sits and which way it faces so
+  // the mobile Enter dive can land on it dead-on, the same way the desktop
+  // dive lands square on the center monitor.
+  let modernPhoneScreenMesh = null;
+  const flightPhoneScreenWorldPos = new THREE.Vector3();
+  // The phone screen's outward-facing normal in world space (resolved once
+  // the scene graph is built, below) — the phone lies flat on the desk, so
+  // this points straight up, but it's resolved from the mesh's own
+  // transform rather than assumed, in case the phone's placement changes.
+  const flightPhoneNormal = new THREE.Vector3(0, 1, 0);
+  // The screen's own "up" edge direction in world space (also resolved
+  // below). Needed because the phone dive ends looking almost straight
+  // down: right as the view direction approaches vertical, the default
+  // world-up (0,1,0) becomes nearly parallel to it, which is a singular
+  // case for camera.lookAt and can make the framing jitter or flip right
+  // at the critical landing moment. Using the screen's own horizontal
+  // "up" instead keeps the orientation well-defined and correctly rolled
+  // the whole way down.
+  const flightPhoneUp = new THREE.Vector3(0, 0, -1);
+  const _cameraUpBlend = new THREE.Vector3();
+
+  // Physical size of the phone's screen plane (world units), set once it's
+  // built below. Used by the mobile-only Enter dive to work out the exact
+  // distance at which the phone's screen fills the camera frame, the same
+  // way MONITOR_SCREEN_W/H is used for the desktop dive into the monitor.
+  let phoneScreenW = 0.07;
+  let phoneScreenD = 0.152;
+
+  // Reference to the high-altitude cloud texture seen through the window,
+  // set once it's built below, so the render loop can scroll it for a
+  // slow, cinematic drift.
+  let cloudTex = null;
+
+  // Refs for the daytime cloud layer drifting over the sunny landscape
+  // photo — a brighter, more visible companion to the subtle night-sky
+  // wisps above, set once it's built below so the render loop can scroll
+  // it and fade it in/out alongside the day/night toggle.
+  let dayCloudTex = null;
+  let dayCloudMat = null;
+
+  // Refs for the window's outside-view crossfade (moonlit skyline <-> sunny
+  // landscape), set once the window is built below, so the sun/moon toggle
+  // script can animate the swap in lockstep with the room's lighting.
+  let windowSceneRefs = null;
+
+  // Refs for the Christmas string-light strand wrapped around the desk
+  // legs, set once the desk is built below: shared bulb/glow materials
+  // (one set per color) plus the couple of point lights that give the
+  // strand a little real illumination. The render loop fades all of it
+  // in/out together, gated to currentTheme === "christmas".
+  let deskChristmasLights = null;
+
+  // Refs for the Christmas string-light strand run around the ceiling's
+  // perimeter (all four wall/ceiling seams), set once the room shell is
+  // built below. Same shared-material approach as the desk strand above,
+  // and faded in/out by the same render-loop logic, gated to
+  // currentTheme === "christmas".
+  let ceilingChristmasLights = null;
+
+  // Refs for the Christmas string-light strand run around the outer edge
+  // of the large window's frame, set once the window is built below. Same
+  // shared-material fade approach as the ceiling/desk strands, faded by
+  // the render loop, gated to currentTheme === "christmas".
+  let windowFrameChristmasLights = null;
+
+  // World-space point hovering just above the coffee table, set once the
+  // table is built below. The render loop projects this into screen space
+  // each frame so the Enter button stays pinned above the table as the
+  // camera drifts.
+  const enterButtonAnchor = new THREE.Vector3(0, 0.76, 0);
+
+  // Coffee-table glow materials, set once the table is built below, so the
+  // render loop can gently pulse the table's self-lit glow in sync with the
+  // hologram light rather than leaving it static.
+  let tableLacquerMat = null;
+  let tableLegMat = null;
+  let tableHaloMat = null;
+  let tableHaloMat2 = null;
+  let tableRimMat = null;
+  let hologramPointLight = null;
+  let hologramEmitterMat = null;
+  let hologramBeamMat = null;
+  let tableUnderGlowLight = null;
+  let tableGroupRef = null;
+
+  // Sun-driven premium details, set once the window/table are built below.
+  // All eased in/out together each frame by sunFactor (0 = night, 1 = full
+  // sun), which the day/night toggle script writes onto
+  // window.__roomDayNight.sunFactor as it animates the room.
+  let sunFlareMat = null;
+  let tableSunPatchMat = null;
+  let cardGlints = [];
+  let tableCoolEmissive = null;
+  let tableWarmEmissive = null;
+
+  // Occasional lightning, outside the window at night: a dedicated light
+  // (kept separate from every other light in the room so it can never drift
+  // out of sync with, or overwrite, the day/night or hover lighting) plus a
+  // bright flash on the sky itself, both silent at intensity/opacity 0 until
+  // a strike is scheduled below. lightningFlickers holds the 1-3 quick
+  // sub-flashes of the currently active strike (empty when none is active).
+  let lightningLight = null;
+  let lightningFlashMat = null;
+  let lightningNextAt = 6 + Math.random()*9;
+  let lightningFlickers = [];
+
+  // Window reflection refs, boosted slightly during rainy (night) mode —
+  // base opacities captured at creation so the render loop can add on top
+  // of them rather than overwrite the authored look.
+  let reflectionMat = null;
+  const reflectionBaseOpacity = 0.4;
+  let windowEdgeGlowMats = [];
+
+  // Every loose card scattered across the coffee table gets registered here
+  // (mesh + its resting local position/rotation) so the Enter transition can
+  // blow them off the table before the camera dives toward the monitor.
+  let looseTableCards = [];
+
+  // Reference to the center monitor's group, set once the monitor array is
+  // built below. Used to aim the Enter-transition camera flight and to
+  // anchor the swoosh streak's convergence point on screen.
+  let centerMonitorGroup = null;
+  const centerMonitorWorldPos = new THREE.Vector3();
+  // The screen's outward-facing normal in world space (resolved once the
+  // scene graph is built, below) — the direction the Enter dive needs to
+  // be traveling by the time it arrives, so the screen fills the frame
+  // squarely instead of at an angle.
+  const centerMonitorNormal = new THREE.Vector3(0, 0, 1);
+
+  // References to the center monitor's own screen material and its glow
+  // overlay, captured at construction so the Enter transition can punch up
+  // the monitor's brightness as the camera closes in on it — set below
+  // once the monitor trio is built.
+  let centerScreenMat = null;
+  let centerScreenGlowMat = null;
+
+  // Coffee-table remote: reference + resting transform set once its GLB
+  // loads (see the coffee-table clutter section below), plus a small state
+  // machine driven each frame in the render loop so it can lift off the
+  // table on page load, pause, tilt to "aim" at the TV, mime a power-button
+  // press, then settle back down onto the table — before the visitor does
+  // anything at all.
+  let remoteHolder = null;
+  let remoteRestY = 0;
+  const remoteRestPos = new THREE.Vector3();
+  let remoteRestRotY = 0;
+  let remoteAnimState = 'pending'; // pending -> lifting -> paused -> pointing -> pressing -> returning -> idle
+  let remoteAnimStartTime = null;
+
+  // Wall-mounted TV: video material ref + power state, set/used once the TV
+  // is built below, so the remote's "press" can fade the screen in and
+  // start the video and background music together.
+  let tvVideoMatRef = null;
+  let tvPoweredOn = false;
+  let tvPowerOnStartTime = null;
+  // The screen's opacity fade is keyed off this instead of tvPowerOnStartTime
+  // directly — it only starts ticking once the video actually has a frame
+  // ready to show (readyState >= HAVE_CURRENT_DATA / a 'loadeddata' event).
+  // On a fast connection this fires effectively the same frame as the press,
+  // so the timing is unchanged from before; on a slow mobile connection it
+  // waits for real data instead of fading up over a blank/stale frame.
+  let tvVideoReady = false;
+  let tvVideoFadeStartTime = null;
+
+  // Power-on energy pulse: a brief blue-white flash (bloom wash + a bar
+  // that sweeps left-to-right) layered over the TV screen, plus a matching
+  // spike on its LED backlight so the light briefly washes the room too.
+  // Refs set once the TV is built below; driven each frame from
+  // tvPowerOnStartTime over TV_FLASH_DUR (see updateRemoteAndTV).
+  let tvGlowRef = null;
+  let tvFlashWashMat = null;
+  let tvFlashBarMat = null;
+  let tvFlashBarMesh = null;
+  let tvFlashBarHalfRange = 0;
+
+  // Clickable meshes for the wall-mounted TV (frame + screen), populated
+  // once they're built below — used to raycast clicks that should open the
+  // linked song rather than start the Enter sequence.
+  let tvClickMeshes = [];
+
+  // Screen LED backlight refs (TV + all 3 monitors) collected as they're
+  // built, so hovering the coffee table / Enter button can intensify their
+  // glow too, the same way it brightens the hologram.
+  const screenGlowRefs = [];
+
+  // Purple/orange LED backlight glow textures, assigned from within the
+  // nested TV/monitor setup function below but declared here so the
+  // window.__roomDayNight exposure (also in this outer scope) can see them.
+  let purpleGlowTex = null;
+  let orangeGlowTex = null;
+
+  // ---------- Room dimensions (ft -> m) ----------
+  const FT = 0.3048;
+  const W = 20 * FT;   // width  (x)
+  const L = 26 * FT;   // length (z)
+  const H = 11 * FT;   // height (y)
+
+  const halfW = W/2, halfL = L/2;
+
+  // ---------- Shared helpers for the Christmas string-light strands ----------
+  // (ceiling perimeter, window frame/mullions, desk legs — all three built
+  // further down reuse these so the "hand-installed" look is consistent
+  // across every strand.) Kept here, in the outer scope, so every nested
+  // build function below can close over them.
+  //
+  // Returns `count` monotonically-increasing t-values from 0 to 1 with the
+  // endpoints pinned (so a strand's start/end — e.g. a room corner — never
+  // moves) but the interior spacing nudged slightly off-grid, so bulbs read
+  // as strung up by hand rather than plotted on a perfect ruler. The jitter
+  // is small relative to the average gap and the array is sorted afterward,
+  // so bulbs never bunch up, cross, or reverse order.
+  function xmasJitteredT(count, jitterAmt){
+    if(jitterAmt === undefined) jitterAmt = 0.32;
+    if(count <= 1) return [0];
+    if(count === 2) return [0, 1];
+    const arr = [0];
+    const span = 1/(count-1);
+    for(let i=1;i<count-1;i++){
+      const base = i*span;
+      arr.push(base + (Math.random()*2-1) * span * jitterAmt);
+    }
+    arr.push(1);
+    arr.sort((a,b)=>a-b);
+    return arr;
+  }
+  // A fixed (not animated) per-bulb brightness multiplier so individual
+  // bulbs in a strand read as slightly different wattages/ages, the way a
+  // real strand does — rolled once at build time and reused every frame,
+  // rather than flickering.
+  function xmasBulbBrightness(){
+    return 0.8 + Math.random() * 0.4; // ~0.80 - 1.20
+  }
+  // A small, crisp "filament" texture for the bright emissive center of
+  // each bulb — tighter and hotter than the soft halo texture, so each
+  // bulb reads as having an actual bright point at its core rather than
+  // being one uniformly-lit blob.
+  function makeXmasBulbCoreTexture(){
+    const s = 32;
+    const c = document.createElement('canvas'); c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.75)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+    return new THREE.CanvasTexture(c);
+  }
+
+  // ---------- Card texture images (embedded, resized/compressed) ----------
+  const CARD_IMG = {
+    yellow: "images/image_001.webp",
+    green: "images/image_002.webp",
+    blue: "images/image_003.webp",
+    red: "images/image_004.webp",
+    black: "images/image_005.webp",
+    redFace: "images/image_006.webp",
+  };
+
+  // ---------- Coffee-table prop models (embedded .glb, base64) ----------
+  const GLB_MODEL = {
+    remote: "models/remote.glb",
+    sodaCan: "models/soda-can.glb",
+    pizzaSlice: "models/pizza-slice.glb",
+  };
+
+
+  // ---------- Renderer / Scene / Camera ----------
+  // Mobile/small-screen render-quality tier: the same room reads
+  // identically at a much lower render cost on a phone-sized viewport, so
+  // touch devices with a small screen get MSAA off, a capped device pixel
+  // ratio, cheaper shadow filtering, a smaller shadow map, and lighter
+  // dust-particle counts. Desktop and tablet-landscape are untouched — this
+  // only trims cost that wouldn't be visible at that size, not anything
+  // you'd notice.
+  const isCoarsePointerStartup = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  const isSmallViewportStartup = Math.min(window.innerWidth, window.innerHeight) <= 760;
+  const isMobilePerfTier = isCoarsePointerStartup && isSmallViewportStartup;
+  if(isMobilePerfTier) document.documentElement.classList.add('perf-mobile');
+
+  const canvasHost = document.body;
+  // MSAA was left on for every device even though the comment above always
+  // intended mobile to skip it — turning it off on the perf tier is one of
+  // the cheapest wins here, since MSAA cost scales with both resolution and
+  // pixel ratio, and mobile runs both of those higher than desktop below.
+  const renderer = new THREE.WebGLRenderer({ antialias: !isMobilePerfTier, powerPreference: 'high-performance' });
+  // Mobile screens are typically higher-DPI than desktop, but rendering this
+  // scene (shadows, hundreds of shadow-casting meshes) at up to 3x pixel
+  // density on phone GPUs is what was causing the reported lag/choppy
+  // dragging and the TV video struggling to keep up — capped in line with
+  // desktop's 2x instead. mobileDprWatchdog below still steps it down
+  // further on devices that need it.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobilePerfTier ? 2 : 1.5));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = isMobilePerfTier ? THREE.PCFSoftShadowMap : THREE.VSMShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // Raised from 0.58 for a brighter overall interior read — combined with
+  // the softened shadow curve in finalPass below, this lifts the room's
+  // midtones and corners without blowing out the screens/neon highlights.
+  renderer.toneMappingExposure = 0.78;
+  // Physically-sized penumbra on the main shadow-casting light reads softer
+  // and more "real" than a hard-edged shadow map, at effectively no extra
+  // cost since it's a shader-side property of the VSM shadow already in use.
+  // PERF: the only thing in the whole room that ever moves a shadow is the
+  // desk chair's slow idle swivel (14s per cycle) — the camera panning
+  // around does NOT require the shadow map to be touched at all, since the
+  // shadow map only depends on the light and the shadow-casting geometry,
+  // never on the camera. But with autoUpdate left on, three.js was doing a
+  // full extra scene pass into the shadow map (hundreds of shadow-casting
+  // meshes) on literally every single rendered frame, including every
+  // frame of a look-around swipe where nothing shadow-relevant changed.
+  // That fixed per-frame cost — independent of and on top of the beauty
+  // render — is almost certainly the main source of the reported choppy
+  // dragging, and it competes with the TV video element for CPU/GPU time
+  // during playback, which lines up with the video occasionally stalling.
+  // Switching to manual updates and refreshing the shadow map on a
+  // throttled cadence (still every frame is well within what the chair's
+  // slow swivel needs to look continuous) cuts that fixed cost roughly in
+  // half on desktop and by two-thirds on mobile, with no visible difference
+  // since nothing casts a shadow fast enough for the lower cadence to show.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+  let shadowFrameCounter = 0;
+  const SHADOW_UPDATE_INTERVAL = isMobilePerfTier ? 3 : 2;
+  canvasHost.appendChild(renderer.domElement);
+
+  // ---------- Cinematic post-processing (interior finishing pass) ----------
+  // Adds bloom on genuinely bright interior sources (monitor/TV glow, the
+  // neon Instagram sign, the hologram light, lamps) plus a light filmic
+  // grade — the kind of finishing a real render pipeline does, not a CSS
+  // filter over the canvas. The window/glass/city-outside group is
+  // explicitly excluded from the bloom source render (see renderFrame
+  // below) so the moon, city lights, and sky are never blurred or
+  // glowed by this pass — only the room's own light sources bloom, per
+  // the "keep the window/outside exactly as-is" requirement. Entirely
+  // additive: if the postprocessing scripts fail to load for any reason
+  // (offline dev, blocked CDN), this quietly falls back to the plain
+  // renderer.render() path, so the page never breaks because of it.
+  // Skipped on the mobile perf tier to protect frame rate — desktop/
+  // tablet only, exactly like the MSAA decision above.
+  const BLOOM_RES_SCALE = 0.5; // bloom renders at half the main scene's resolution
+  let composer = null, bloomComposer = null, bloomPass = null, finalPass = null;
+  const postFXEnabled = !isMobilePerfTier && !!(window.THREE && THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass && THREE.ShaderPass);
+  if(postFXEnabled){
+    try{
+      const useMSAA = renderer.capabilities.isWebGL2;
+      const rtSize = renderer.getSize(new THREE.Vector2());
+      const pr = renderer.getPixelRatio();
+
+      // Bloom-source pipeline: renders the scene with the window group
+      // hidden (toggled in renderFrame, right before this runs) and
+      // blurs whatever's left over the threshold — i.e. only the room's
+      // own screens/neon/lamps, never the moon or city skyline.
+      const bloomRT = new THREE.WebGLRenderTarget(rtSize.x * pr * BLOOM_RES_SCALE, rtSize.y * pr * BLOOM_RES_SCALE, { format: THREE.RGBAFormat });
+      bloomComposer = new THREE.EffectComposer(renderer, bloomRT);
+      bloomComposer.addPass(new THREE.RenderPass(scene, camera));
+      // Strength/radius up and threshold down from (0.55, 0.55, 0.82) so the
+      // screens, neon sign, and hologram light bloom more assertively —
+      // punchier highlights — without dragging in the mid-grey walls/floor.
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(rtSize.x, rtSize.y), 0.7, 0.5, 0.74);
+      bloomComposer.addPass(bloomPass);
+      bloomComposer.renderToScreen = false;
+
+      // Base/beauty pipeline: the full, normal scene (window included). A
+      // multisampled render target keeps edges as crisp as the native
+      // MSAA context did before routing through the composer's offscreen
+      // buffers — otherwise post-processing quietly softens every edge.
+      const baseRT = new THREE.WebGLRenderTarget(
+        rtSize.x * pr, rtSize.y * pr,
+        { samples: useMSAA ? 4 : 0, format: THREE.RGBAFormat, encoding: THREE.sRGBEncoding }
+      );
+      composer = new THREE.EffectComposer(renderer, baseRT);
+      composer.addPass(new THREE.RenderPass(scene, camera));
+
+      // Final pass: adds the bloom texture back on top of the beauty
+      // render, then a small filmic grade — a soft vignette to draw the
+      // eye inward (matching the framed, cinematic reference look), a
+      // touch of extra contrast/saturation so materials read richer
+      // under the ACES tone-map, and a whisper of film grain so
+      // gradients (the dusk sky, soft shadows) don't band.
+      finalPass = new THREE.ShaderPass({
+        uniforms: {
+          tDiffuse: { value: null },
+          tBloom: { value: bloomComposer.renderTarget2.texture },
+          uTime: { value: 0 },
+          uVignette: { value: 0.22 },
+          uContrast: { value: 1.02 },
+          uSaturation: { value: 1.06 },
+          uGrain: { value: 0.014 },
+          // Extra S-curve terms layered on top of the existing pivot-contrast:
+          // uShadowDepth pulls dark tones down (deeper corners/underdesk
+          // shadow), uHighlightLift pushes bright tones up (screens, neon,
+          // window highlights pop harder) — independent of the flat contrast
+          // above so midtones stay put.
+          // Both eased back from 0.22/0.30 so shadows read as soft contact
+          // shadows (gentle grounding under furniture) rather than crushed
+          // near-black corners, matching a brighter, more polished interior.
+          uShadowDepth: { value: 0.22 },
+          uHighlightLift: { value: 0.22 }
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+        `,
+        fragmentShader: `
+          uniform sampler2D tDiffuse, tBloom;
+          uniform float uTime, uVignette, uContrast, uSaturation, uGrain, uShadowDepth, uHighlightLift;
+          varying vec2 vUv;
+          float grainNoise(vec2 co){
+            return fract(sin(dot(co, vec2(12.9898,78.233)) + uTime*60.0) * 43758.5453);
+          }
+          void main(){
+            vec4 base = texture2D(tDiffuse, vUv);
+            vec4 bloom = texture2D(tBloom, vUv);
+            vec3 c = base.rgb + bloom.rgb;
+            // Contrast (pivoted at mid-grey)
+            c = (c - 0.5) * uContrast + 0.5;
+            // Shadow/highlight S-curve: crushes dark tones toward black
+            // (deeper contact shadows, darker wall/floor corners) and lifts
+            // bright tones toward white (crisper specular pop on screens,
+            // neon, glossy desk/floor), leaving the midtones close to
+            // untouched so skin/wood/fabric colors don't shift.
+            float luma0 = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            float shadowMask = 1.0 - smoothstep(0.0, 0.5, luma0);
+            float highlightMask = smoothstep(0.5, 1.0, luma0);
+            c *= (1.0 - uShadowDepth * shadowMask);
+            c += (c) * uHighlightLift * highlightMask * highlightMask;
+            // Saturation
+            float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            c = mix(vec3(luma), c, uSaturation);
+            // Vignette — soft falloff from center, never fully crushes edges
+            vec2 d = vUv - 0.5;
+            float vig = 1.0 - smoothstep(0.35, 0.9, length(d)) * uVignette;
+            c *= vig;
+            // Fine film grain to break up banding on soft gradients
+            c += (grainNoise(vUv) - 0.5) * uGrain;
+            gl_FragColor = vec4(clamp(c, 0.0, 1.0), base.a);
+          }
+        `
+      });
+      finalPass.renderToScreen = true;
+      composer.addPass(finalPass);
+    }catch(err){
+      composer = null; bloomComposer = null; bloomPass = null; finalPass = null;
+    }
+  }
+  // Single call site used everywhere the scene is drawn, so the fallback
+  // (plain renderer.render) and the composer path never drift apart.
+  // windowGroup (the window/glass/city/sky container, built further
+  // below) is only ever hidden for the instant of the bloom-source
+  // render and is restored before the beauty pass and before this
+  // function returns, so nothing else in the app ever observes it as
+  // hidden — visibility toggle, not a scene mutation.
+  function renderFrame(){
+    // Refresh the shadow map on a throttled cadence rather than every
+    // frame (see the renderer.shadowMap.autoUpdate = false comment above)
+    // — still frequent enough that the desk chair's slow swivel shadow
+    // reads as perfectly smooth, just without redoing that full extra pass
+    // on frames where nothing shadow-relevant could have changed.
+    shadowFrameCounter++;
+    if(shadowFrameCounter % SHADOW_UPDATE_INTERVAL === 0){
+      renderer.shadowMap.needsUpdate = true;
+    }
+    if(composer && bloomComposer){
+      const wasVisible = windowGroup.visible;
+      windowGroup.visible = false;
+      bloomComposer.render();
+      windowGroup.visible = wasVisible;
+      finalPass.uniforms.tBloom.value = bloomComposer.renderTarget2.texture;
+      finalPass.uniforms.uTime.value = performance.now() * 0.001;
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
+  }
+
+  // ---------- Mobile adaptive resolution watchdog ----------
+  // Phones vary hugely in GPU power, so a single fixed pixel ratio is
+  // always wrong for someone: high enough to stay sharp on a strong phone
+  // and it chugs on a weaker one; low enough to run smoothly everywhere and
+  // it looks soft on the strong ones. Instead, mobile starts at the full
+  // pixel ratio above (sharp) and this watchdog samples real frame times
+  // once things settle; if they're consistently slow it quietly steps the
+  // resolution down a notch and re-measures, stopping at a floor that still
+  // reads fine on a phone screen. Desktop/tablet never touch this.
+  let mobileDpr = renderer.getPixelRatio();
+  const MOBILE_DPR_FLOOR = 1.5;
+  const MOBILE_DPR_STEP = 0.4;
+  let dprSampleMs = 0, dprSampleFrames = 0;
+  function stepMobileDprIfSlow(dt){
+    if(!isMobilePerfTier || mobileDpr <= MOBILE_DPR_FLOOR) return;
+    dprSampleMs += dt * 1000;
+    dprSampleFrames++;
+    if(dprSampleFrames < 45) return; // ~0.75s of frames before judging, so one slow frame can't trigger it
+    const avgFrameMs = dprSampleMs / dprSampleFrames;
+    dprSampleMs = 0; dprSampleFrames = 0;
+    if(avgFrameMs > 30){ // sustained sub-33fps means this phone can't afford the current resolution
+      mobileDpr = Math.max(MOBILE_DPR_FLOOR, mobileDpr - MOBILE_DPR_STEP);
+      renderer.setPixelRatio(mobileDpr);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      // composer/bloomComposer are always null on the mobile perf tier
+      // (postFXEnabled excludes it), so nothing to resize here in
+      // practice — guarded defensively in case that ever changes.
+      if(composer) composer.setSize(window.innerWidth * mobileDpr, window.innerHeight * mobileDpr);
+      if(bloomComposer) bloomComposer.setSize(window.innerWidth * mobileDpr, window.innerHeight * mobileDpr);
+    }
+  }
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x161b30, 4, 15);
+
+  // Base FOV is tuned for a desktop-ish (landscape) aspect ratio. On narrow
+  // portrait screens (phones), keeping that same vertical FOV crops away
+  // most of the room side-to-side. To let mobile see roughly as much of the
+  // room as desktop does, widen the vertical FOV on narrow aspects so the
+  // *horizontal* field of view stays close to the desktop horizontal FOV —
+  // this reads as "zooming out" rather than a fisheye distortion.
+  const BASE_FOV = 52;
+  const BASE_ASPECT = 16 / 9;
+  function fovForAspect(aspect){
+    if(aspect >= BASE_ASPECT) return BASE_FOV;
+    const baseHFov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(BASE_FOV) / 2) * BASE_ASPECT);
+    let vFov = 2 * Math.atan(Math.tan(baseHFov / 2) / aspect);
+    vFov = THREE.MathUtils.radToDeg(vFov);
+    vFov = Math.min(vFov, 88); // clamp so it never turns into a fisheye
+    // Mobile-only: the width-matching formula above still reads a hair too
+    // wide once real phone viewports are accounted for, so zoom in a touch
+    // on narrow/portrait aspects — this also crops away some of the
+    // foreground couch, which otherwise dominates the bottom of the frame
+    // on a phone-sized viewport.
+    if(aspect < 1) vFov *= 0.9;
+    return vFov;
+  }
+  const camera = new THREE.PerspectiveCamera(fovForAspect(window.innerWidth/window.innerHeight), window.innerWidth/window.innerHeight, 0.05, 60);
+  // Start on the west side of the room, looking toward the corner where the
+  // window wall (east) meets the far wall — window fills most of the view.
+  const camStart = new THREE.Vector3(-halfW*0.55, H*0.42, halfL*0.65);
+
+  // ---------- Look-direction control (yaw / pitch) ----------
+  let yaw   = 0.63;    // radians, heading toward the window / far-wall corner
+  let pitch = -0.02;
+  // Mobile-only: on narrow/portrait viewports the TV on the back wall sits
+  // close to the left edge of the frame and can clip. Angling the heading
+  // left a touch brings it fully into view without changing desktop framing.
+  const isMobileStartViewport = window.innerWidth < window.innerHeight;
+  if(isMobileStartViewport){
+    yaw -= 0.07;
+    // The camera sits higher than desktop's, so at the same pitch it looks
+    // further out over the couch's low, close-in parts (cushions, armrest)
+    // and mostly just shows the tall backrest instead. Tilting down brings
+    // the seat back into frame while still clearing the backrest.
+    pitch -= 0.09;
+  }
+
+  // Mobile-only: raise the eye-line, step in closer (rather than back), and
+  // shift left along the camera's own right/left axis so the couch reads
+  // smaller and the TV sits better centered in the narrower frame. Desktop's
+  // camStart/position is untouched.
+  if(isMobileStartViewport){
+    camStart.y += 0.4;
+    const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+    camStart.addScaledVector(forward, -0.3);
+    camStart.addScaledVector(right, -0.45);
+  }
+
+  camera.position.copy(camStart);
+  const yawStart = yaw, pitchStart = pitch;
+
+  // Scratch vectors reused every call instead of allocating two new
+  // THREE.Vector3s per frame — same math, no per-frame garbage.
+  const _camDirScratch = new THREE.Vector3();
+  const _camLookScratch = new THREE.Vector3();
+  function updateCameraDirection(rollAmt){
+    _camDirScratch.set(
+      Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      Math.cos(yaw) * Math.cos(pitch) * -1
+    );
+    _camLookScratch.copy(camera.position).add(_camDirScratch);
+    camera.lookAt(_camLookScratch);
+    if(rollAmt) camera.rotateZ(rollAmt);
+  }
+  updateCameraDirection();
+
+  // ---------- Cinematic idle drift: slow, eased, head-like motion ----------
+  // The camera behaves like a patient operator on a slider/gimbal rig: a
+  // slow lateral glide with a faint depth arc, a barely-there vertical
+  // breathe, and a whisper of roll — several mismatched sine waves layered
+  // together so nothing repeats on a visible beat, all kept small and slow
+  // enough to feel alive without ever tipping into motion sickness.
+  const driftRight   = new THREE.Vector3(Math.cos(yawStart), 0, Math.sin(yawStart));
+  const driftForward = new THREE.Vector3(Math.sin(yawStart), 0, -Math.cos(yawStart));
+  const DRIFT_AMPLITUDE       = 0.30;   // meters — total slide is subtle, not a pan
+  const DRIFT_DEPTH_AMPLITUDE = 0.06;   // meters — faint arc so it doesn't feel like a straight rail
+  const DRIFT_PERIOD          = 27;     // seconds per full swing — slow and unhurried
+  const DRIFT_FOCAL_DIST      = 4.6;    // meters — how far "into the room" the eye stays fixed
+  const BOB_AMPLITUDE         = 0.012;  // meters — the faintest vertical breathe
+  const BOB_PERIOD            = 10.5;   // seconds — deliberately out of sync with the slide
+  const ROLL_AMPLITUDE        = 0.0032; // radians (~0.18°) — a whisper of handheld roll
+  const ROLL_PERIOD           = 19;     // seconds — its own, unrelated rhythm
+
+  function easeInOutCubic(x){
+    return x < 0.5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2;
+  }
+  function easeOutCubic(x){ return 1 - Math.pow(1 - x, 3); }
+
+  // Attack/decay envelope (0..1) used by the TV power-on flash: a quick
+  // snap up to "peak" (fraction of x), then an easing settle back to 0
+  // shaped by tailPow (higher = a faster, sharper fade-out).
+  function pulseEnvelope(x, peak, tailPow){
+    if(x <= 0) return 0;
+    if(x <= peak) return easeOutCubic(x / peak);
+    const d = Math.min(1, (x - peak) / (1 - peak));
+    return Math.pow(1 - d, tailPow);
+  }
+
+  // Pure function of elapsed time — the idle camera's target pose. Keeping
+  // this as a function (rather than inline state) lets the "return to
+  // idle" transition below chase a smoothly moving target instead of a
+  // fixed point, so re-settling after a drag never feels like a snap.
+  function idleTarget(t){
+    const phase = (t / DRIFT_PERIOD) * Math.PI * 2;
+    // Two gently mismatched sine waves so the swing never feels like a
+    // metronome — still smooth and slow, just not mechanically repetitive.
+    const lateral = Math.sin(phase) + Math.sin(phase * 2.13 + 1.7) * 0.12;
+    const lateralOffset = lateral * DRIFT_AMPLITUDE;
+    const depthOffset = Math.cos(phase) * DRIFT_DEPTH_AMPLITUDE;
+    const bobOffset = Math.sin((t / BOB_PERIOD) * Math.PI * 2 + 0.9) * BOB_AMPLITUDE;
+    const rollAmt = Math.sin((t / ROLL_PERIOD) * Math.PI * 2 + 2.4) * ROLL_AMPLITUDE;
+
+    const pos = camStart.clone()
+      .addScaledVector(driftRight, lateralOffset)
+      .addScaledVector(driftForward, depthOffset);
+    pos.y += bobOffset;
+
+    // Small counter-yaw keeps the framing settled on the room as the
+    // camera slides, instead of the view sliding off toward the walls.
+    const tYaw   = yawStart + (-lateralOffset / DRIFT_FOCAL_DIST);
+    const tPitch = pitchStart + Math.sin(t*0.045)*0.012;
+
+    return { pos, yaw: tYaw, pitch: tPitch, roll: rollAmt };
+  }
+
+  // ---------- Materials ----------
+  const wallColor   = 0xefe9df;
+  const ceilColor   = 0xf5f1e9;
+
+  // Faint painted-drywall stipple/undulation so the walls stop reading as
+  // perfectly even CG planes — subtle enough to disappear at a glance, but
+  // it breaks up the dead-flat specular response under grazing light.
+  const wallPlaster = makePlasterMaps(512, '#efe9df');
+  wallPlaster.roughMap.repeat.set(3, 2);
+  wallPlaster.bumpMap.repeat.set(3, 2);
+  const wallMat  = new THREE.MeshStandardMaterial({
+    color: wallColor, roughness: 0.96, metalness: 0,
+    roughnessMap: wallPlaster.roughMap, bumpMap: wallPlaster.bumpMap, bumpScale: 0.0006
+  });
+  const ceilMat  = new THREE.MeshStandardMaterial({ color: ceilColor,  roughness: 0.98, metalness: 0 });
+  const backWallPlaster = makePlasterMaps(512, '#f1ece2');
+  backWallPlaster.roughMap.repeat.set(3, 2);
+  backWallPlaster.bumpMap.repeat.set(3, 2);
+  const backWallMat = new THREE.MeshStandardMaterial({
+    color: 0xf1ece2, roughness: 0.97,
+    roughnessMap: backWallPlaster.roughMap, bumpMap: backWallPlaster.bumpMap, bumpScale: 0.0006
+  });
+
+  // ---------- Premium oak hardwood floor: procedural maps + a soft reflection environment ----------
+  function clamp255(v){ return Math.max(0, Math.min(255, v)); }
+
+  function shadeHex(hex, amt){
+    const num = parseInt(hex.slice(1), 16);
+    return {
+      r: clamp255((num>>16) + amt),
+      g: clamp255(((num>>8)&0xff) + amt),
+      b: clamp255((num&0xff) + amt)
+    };
+  }
+
+  function rand(a, b){ return a + Math.random()*(b-a); }
+
+  function hexToRgba(hex, a){
+    const num = parseInt(hex.slice(1), 16);
+    return `rgba(${(num>>16)&0xff},${(num>>8)&0xff},${num&0xff},${a})`;
+  }
+
+  // Diffuse map: wide oak plank flooring — a real multi-tone board mix (not
+  // one flat oak color), each board given its own confined grain figure,
+  // deep hairline plank seams in a staggered running-bond layout, soft worn
+  // edges beside each seam, and a scatter of tiny hairline scratches.
+  function makeOakColorMap(size){
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    const baseOak    = '#c69a63'; // warm honey oak
+    const darkGrain  = '#8a5f38';
+    const lightGrain = '#e0bc8a';
+    // A real hardwood floor is milled from many boards, not one uniform
+    // color — mix in a spread of tones (deeper amber, pale bleached, warm
+    // walnut-ish) so neighboring planks read as distinct pieces of wood.
+    const oakTones = ['#c69a63', '#b6864c', '#d9b57f', '#a9773f', '#cf9f66'];
+
+    ctx.fillStyle = baseOak;
+    ctx.fillRect(0, 0, size, size);
+
+    // ---- Plank layout: planks run vertically (length of texture), grouped
+    // into columns across the width, with staggered (running-bond) end seams ----
+    const plankCols = 5;
+    const plankW = size / plankCols;
+    const plankLen = size / 2.6;
+
+    // Per-plank tonal variation — real boards from the same tree still vary,
+    // and here each board also draws from a spread of oak tones for a much
+    // more varied, natural-looking multi-board floor. Segment bounds are
+    // recorded so the grain figure below can be confined to its own board.
+    const plankSegments = [];
+    for(let c=0; c<plankCols; c++){
+      const colOffset = (c % 2 === 0) ? 0 : plankLen*0.5;
+      let y = -colOffset;
+      while(y < size){
+        const h = plankLen * rand(0.85, 1.15);
+        const tone = oakTones[Math.floor(Math.random()*oakTones.length)];
+        const tint = (Math.random()-0.5) * 42; // wider spread than a single-tone floor
+        const c1 = shadeHex(tone, tint);
+        ctx.fillStyle = `rgba(${c1.r},${c1.g},${c1.b},0.62)`;
+        ctx.fillRect(c*plankW, y, plankW, h);
+
+        const endGrad = ctx.createLinearGradient(0, y, 0, y+h);
+        endGrad.addColorStop(0, 'rgba(90,60,32,0.18)');
+        endGrad.addColorStop(0.08, 'rgba(90,60,32,0)');
+        endGrad.addColorStop(0.92, 'rgba(90,60,32,0)');
+        endGrad.addColorStop(1, 'rgba(90,60,32,0.18)');
+        ctx.fillStyle = endGrad;
+        ctx.fillRect(c*plankW, y, plankW, h);
+
+        plankSegments.push({ c, y, h, tone });
+        y += h;
+      }
+    }
+
+    // ---- Large soft cathedral-grain blotches (sweeping figure inside boards) ----
+    for(let i=0; i<60; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const rx = 18 + Math.random()*46;
+      const ry = 90 + Math.random()*220;
+      const amt = (Math.random()-0.35) * 30;
+      const c = shadeHex(baseOak, amt);
+      const grad = ctx.createRadialGradient(x,y,0,x,y,ry);
+      grad.addColorStop(0, `rgba(${c.r},${c.g},${c.b},0.22)`);
+      grad.addColorStop(1, `rgba(${c.r},${c.g},${c.b},0)`);
+      ctx.save();
+      ctx.translate(x,y);
+      ctx.scale(rx/ry, 1);
+      ctx.translate(-x,-y);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x-ry, y-ry, ry*2, ry*2);
+      ctx.restore();
+    }
+
+    // ---- Fine wavy grain lines, confined to each individual board so every
+    // plank carries its own figure instead of one continuous column-wide
+    // pattern — some boards tight and quiet, others loud and cathedral-heavy,
+    // exactly like a real mixed bundle of milled oak ----
+    plankSegments.forEach(seg=>{
+      const cx0 = seg.c*plankW + plankW*0.08;
+      const cx1 = seg.c*plankW + plankW*0.92;
+      const y0 = Math.max(0, seg.y), y1 = Math.min(size, seg.y+seg.h);
+      if(y1 <= y0) return;
+      const figureIntensity = rand(0.6, 1.6); // per-board character: quiet vs. loud figure
+      const lineCount = Math.round(10 * figureIntensity);
+      for(let i=0; i<lineCount; i++){
+        const baseX = rand(cx0, cx1);
+        const dark = Math.random() < 0.72;
+        const col = dark ? darkGrain : lightGrain;
+        const alpha = (dark ? rand(0.05, 0.16) : rand(0.04, 0.10)) * figureIntensity;
+        ctx.strokeStyle = hexToRgba(col, Math.min(alpha, 0.32));
+        ctx.lineWidth = rand(0.5, dark ? 2.2 : 1.4);
+        ctx.beginPath();
+        let x = baseX;
+        ctx.moveTo(x, y0);
+        const wob = rand(3, 15) * (0.7 + figureIntensity*0.3);
+        const freq = rand(0.008, 0.024);
+        const phase = Math.random()*10;
+        for(let y=y0; y<=y1; y+=8){
+          x = baseX + Math.sin(y*freq + phase)*wob + (Math.random()-0.5)*1.2;
+          ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      // occasional small knot / burl accent — more likely on "loud figure" boards
+      if(Math.random() < 0.3 + figureIntensity*0.18){
+        const kx = rand(cx0, cx1), ky = rand(y0, y1);
+        const kr = rand(4, 9);
+        const kgrad = ctx.createRadialGradient(kx,ky,0,kx,ky,kr*2.4);
+        kgrad.addColorStop(0, 'rgba(74,48,26,0.55)');
+        kgrad.addColorStop(0.4, 'rgba(90,60,32,0.28)');
+        kgrad.addColorStop(1, 'rgba(90,60,32,0)');
+        ctx.fillStyle = kgrad;
+        ctx.beginPath();
+        ctx.ellipse(kx, ky, kr, kr*2.4, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(74,48,26,0.22)';
+        ctx.lineWidth = 1;
+        for(let r=1;r<=3;r++){
+          ctx.beginPath();
+          ctx.ellipse(kx, ky, kr*(1+r*0.6), kr*(2.4+r*0.9), 0, 0, Math.PI*2);
+          ctx.stroke();
+        }
+      }
+    });
+
+    // ---- fine speckle / pore grain (aggregate texture of the wood itself) ----
+    const img = ctx.getImageData(0, 0, size, size);
+    const d = img.data;
+    for(let i=0; i<d.length; i+=4){
+      const n = (Math.random()-0.5)*8;
+      d[i]   = clamp255(d[i]+n);
+      d[i+1] = clamp255(d[i+1]+n*0.9);
+      d[i+2] = clamp255(d[i+2]+n*0.7);
+    }
+    ctx.putImageData(img, 0, 0);
+
+    // ---- Plank seams: real, physically-legible grooves (darker + wider than
+    // a hairline) with a bright bevel highlight along one side, so each board
+    // reads as an individual piece of wood butted against its neighbor ----
+    for(let c=1; c<plankCols; c++){
+      const x = c*plankW;
+      const seamGrad = ctx.createLinearGradient(x-7, 0, x+7, 0);
+      seamGrad.addColorStop(0.0,  'rgba(60,40,22,0)');
+      seamGrad.addColorStop(0.38, 'rgba(60,40,22,0.14)');
+      seamGrad.addColorStop(0.5,  'rgba(32,20,10,0.46)');
+      seamGrad.addColorStop(0.60, 'rgba(255,244,222,0.14)');
+      seamGrad.addColorStop(1.0,  'rgba(60,40,22,0)');
+      ctx.fillStyle = seamGrad;
+      ctx.fillRect(x-7, 0, 14, size);
+    }
+    plankSegments.forEach(seg=>{
+      const y = seg.y + seg.h;
+      if(y>0 && y<size){
+        const seamGrad = ctx.createLinearGradient(0, y-5, 0, y+5);
+        seamGrad.addColorStop(0.0, 'rgba(60,40,22,0)');
+        seamGrad.addColorStop(0.4, 'rgba(32,20,10,0.36)');
+        seamGrad.addColorStop(0.6, 'rgba(255,244,222,0.10)');
+        seamGrad.addColorStop(1.0, 'rgba(60,40,22,0)');
+        ctx.fillStyle = seamGrad;
+        ctx.fillRect(seg.c*plankW, y-5, plankW, 10);
+      }
+    });
+
+    // ---- Worn edges: gentle irregular sheen right along seam lines ----
+    for(let c=1; c<plankCols; c++){
+      const x = c*plankW;
+      ctx.strokeStyle = 'rgba(255,246,226,0.07)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for(let y=0;y<=size;y+=10){
+        ctx.lineTo(x+2+(Math.random()-0.5)*1.5, y);
+      }
+      ctx.stroke();
+    }
+
+    // ---- Tiny scratches: short, faint, mostly aligned along the grain
+    // direction with a few stray cross-scratches for realism ----
+    for(let i=0; i<130; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const alongGrain = Math.random() < 0.8;
+      const len = rand(8, 46);
+      const angle = alongGrain ? (Math.PI/2 + rand(-0.06,0.06)) : rand(0, Math.PI);
+      const dx = Math.cos(angle)*len, dy = Math.sin(angle)*len;
+      const light = Math.random() < 0.5;
+      ctx.strokeStyle = light ? `rgba(255,248,230,${rand(0.05,0.16)})` : `rgba(58,38,20,${rand(0.06,0.18)})`;
+      ctx.lineWidth = rand(0.4, 1.1);
+      ctx.beginPath();
+      ctx.moveTo(x - dx/2, y - dy/2);
+      ctx.lineTo(x + dx/2, y + dy/2);
+      ctx.stroke();
+    }
+
+    // a few slightly deeper, longer scuffs (satin-finish wear, not damage)
+    for(let i=0; i<14; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const len = rand(30, 90);
+      const angle = Math.PI/2 + rand(-0.1,0.1);
+      const dx = Math.cos(angle)*len, dy = Math.sin(angle)*len;
+      ctx.strokeStyle = `rgba(70,46,24,${rand(0.05,0.11)})`;
+      ctx.lineWidth = rand(0.6, 1.3);
+      ctx.beginPath();
+      ctx.moveTo(x - dx/2, y - dy/2);
+      ctx.lineTo(x + dx/2, y + dy/2);
+      ctx.stroke();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 4);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 8;
+    return tex;
+  }
+
+  // Roughness map: satin-finish wood — smooth overall with gentle board-to-board
+  // variation and slightly rougher scuffed/worn patches near seams and scratches.
+  // Seams also carry a touch of extra roughness contrast so the groove itself
+  // catches/scatters light differently than the smooth board faces beside it —
+  // reinforcing the slight, board-by-board reflectivity of a real satin floor.
+  function makeOakRoughnessMap(size){
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = 'rgb(90,90,90)'; // ~0.35 base roughness — satin, slightly glossier than before
+    ctx.fillRect(0, 0, size, size);
+
+    const plankCols = 5;
+    const plankW = size/plankCols;
+    for(let c=0; c<plankCols; c++){
+      const v = 78 + Math.random()*42; // wider per-board roughness spread — more varied sheen
+      ctx.fillStyle = `rgba(${v},${v},${v},0.4)`;
+      ctx.fillRect(c*plankW, 0, plankW, size);
+    }
+
+    for(let i=0; i<90; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const r = 40 + Math.random()*140;
+      const v = 70 + Math.random()*80;
+      const grad = ctx.createRadialGradient(x,y,0,x,y,r);
+      grad.addColorStop(0, `rgba(${v},${v},${v},0.25)`);
+      grad.addColorStop(1, `rgba(${v},${v},${v},0)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, size, size);
+    }
+
+    // seam grooves read very slightly rougher (light scatters more inside a groove)
+    for(let c=1; c<plankCols; c++){
+      const x = c*plankW;
+      const seamGrad = ctx.createLinearGradient(x-6, 0, x+6, 0);
+      seamGrad.addColorStop(0.0, 'rgba(190,190,190,0)');
+      seamGrad.addColorStop(0.5, 'rgba(190,190,190,0.30)');
+      seamGrad.addColorStop(1.0, 'rgba(190,190,190,0)');
+      ctx.fillStyle = seamGrad;
+      ctx.fillRect(x-6, 0, 12, size);
+    }
+
+    for(let i=0; i<130; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const len = rand(8, 46);
+      const angle = Math.PI/2 + rand(-0.08,0.08);
+      const dx = Math.cos(angle)*len, dy = Math.sin(angle)*len;
+      ctx.strokeStyle = `rgba(150,150,150,${rand(0.08,0.2)})`;
+      ctx.lineWidth = rand(0.5, 1.2);
+      ctx.beginPath();
+      ctx.moveTo(x-dx/2, y-dy/2);
+      ctx.lineTo(x+dx/2, y+dy/2);
+      ctx.stroke();
+    }
+
+    const img = ctx.getImageData(0, 0, size, size);
+    const d = img.data;
+    for(let i=0; i<d.length; i+=4){
+      const n = (Math.random()-0.5)*10;
+      const v = clamp255(d[i]+n);
+      d[i] = d[i+1] = d[i+2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 4);
+    return tex;
+  }
+
+  // Bump map: reuses the grain/seam/scratch structure as fine relief so the
+  // grain and worn seams catch light physically, not just as flat color.
+  // Seam grooves are cut noticeably deeper than before so each plank reads
+  // as a genuinely separate board with a real physical edge, not a painted line.
+  function makeOakBumpMap(size){
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgb(128,128,128)';
+    ctx.fillRect(0,0,size,size);
+
+    const plankCols = 5;
+    const plankW = size/plankCols;
+    const plankLen = size/2.6;
+
+    for(let c=0; c<plankCols; c++){
+      const cx0 = c*plankW + plankW*0.08;
+      const cx1 = c*plankW + plankW*0.92;
+      for(let i=0; i<26; i++){
+        const baseX = rand(cx0, cx1);
+        const v = Math.random()<0.72 ? rand(90,116) : rand(140,160);
+        ctx.strokeStyle = `rgba(${v},${v},${v},0.5)`;
+        ctx.lineWidth = rand(0.5, 1.6);
+        ctx.beginPath();
+        let x = baseX;
+        ctx.moveTo(x,0);
+        const wob = rand(4,16), freq = rand(0.008,0.02);
+        for(let y=0;y<=size;y+=8){
+          x = baseX + Math.sin(y*freq+i)*wob;
+          ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // deeper vertical plank-column seams — a real routed/beveled edge, not a hairline
+    for(let c=1; c<plankCols; c++){
+      const x = c*plankW;
+      ctx.strokeStyle = 'rgba(40,40,40,0.9)';
+      ctx.lineWidth = 4.5;
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,size); ctx.stroke();
+      ctx.strokeStyle = 'rgba(190,190,190,0.5)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x+2.4,0); ctx.lineTo(x+2.4,size); ctx.stroke();
+    }
+    for(let c=0; c<plankCols; c++){
+      const colOffset = (c % 2 === 0) ? 0 : plankLen*0.5;
+      let y = -colOffset, h;
+      while(y < size){
+        h = plankLen * rand(0.85,1.15);
+        y += h;
+        if(y>0 && y<size){
+          ctx.strokeStyle = 'rgba(50,50,50,0.85)';
+          ctx.lineWidth = 3.6;
+          ctx.beginPath(); ctx.moveTo(c*plankW,y); ctx.lineTo(c*plankW+plankW,y); ctx.stroke();
+          ctx.strokeStyle = 'rgba(185,185,185,0.4)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(c*plankW,y+2); ctx.lineTo(c*plankW+plankW,y+2); ctx.stroke();
+        }
+      }
+    }
+
+    for(let i=0; i<130; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const len = rand(8,46);
+      const angle = Math.PI/2 + rand(-0.06,0.06);
+      const dx = Math.cos(angle)*len, dy = Math.sin(angle)*len;
+      const light = Math.random()<0.5;
+      ctx.strokeStyle = light ? 'rgba(175,175,175,0.4)' : 'rgba(90,90,90,0.4)';
+      ctx.lineWidth = rand(0.4,1);
+      ctx.beginPath(); ctx.moveTo(x-dx/2,y-dy/2); ctx.lineTo(x+dx/2,y+dy/2); ctx.stroke();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 4);
+    return tex;
+  }
+
+  // ---------- HDRI-style environment ----------
+  // A small baked "sky" captured via PMREM: a soft vertical gradient (bright
+  // zenith -> warm horizon -> bounced-light base) plus a bright sun disc aimed
+  // the same direction as the physical sun light below, and a faint fill glow
+  // opposite it. Used as scene.environment (soft ambient / IBL for every PBR
+  // material in the room) and as the floor's reflection map.
+  const sunDir = new THREE.Vector3(0.86, 0.42, 0.28).normalize();
+
+  function makeHDRIEnvironment(renderer){
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+
+    const envScene = new THREE.Scene();
+
+    const gradCanvas = document.createElement('canvas');
+    gradCanvas.width = 2; gradCanvas.height = 256;
+    const gctx = gradCanvas.getContext('2d');
+    const grad = gctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0.00, '#101a34'); // zenith — deep blue-hour sky
+    grad.addColorStop(0.45, '#1c2b4f'); // upper blue
+    grad.addColorStop(0.62, '#3d3a5c'); // horizon — dusky violet afterglow
+    grad.addColorStop(1.00, '#211f30'); // base — dark cool bounce tone
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, 2, 256);
+    const skyTex = new THREE.CanvasTexture(gradCanvas);
+    skyTex.encoding = THREE.sRGBEncoding;
+
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(40, 24, 24),
+      new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide })
+    );
+    envScene.add(sky);
+
+    // Bright HDR sun disc — colors above 1.0 read as true radiance in the PMREM bake
+    const sunDisc = new THREE.Mesh(
+      new THREE.SphereGeometry(3.2, 16, 16),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(1.3, 1.0, 0.95) })
+    );
+    sunDisc.position.copy(sunDir.clone().multiplyScalar(36));
+    envScene.add(sunDisc);
+
+    // Faint fill glow opposite the sun, so reflections aren't pitch-dark on that side
+    const fillGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(22, 26),
+      new THREE.MeshBasicMaterial({ color: 0x232a45 })
+    );
+    fillGlow.position.set(-22, 6, -6);
+    fillGlow.lookAt(0, 4, 0);
+    envScene.add(fillGlow);
+
+    const rt = pmrem.fromScene(envScene, 0.035);
+    pmrem.dispose();
+    return rt.texture;
+  }
+
+  const oakColorMap = makeOakColorMap(512);
+  const oakRoughMap = makeOakRoughnessMap(512);
+  const oakBumpMap = makeOakBumpMap(512);
+  const hdriEnvMap = makeHDRIEnvironment(renderer);
+  scene.environment = hdriEnvMap; // soft ambient/IBL for every PBR material in the room
+
+  const floorMat = new THREE.MeshPhysicalMaterial({
+    map: oakColorMap,
+    roughnessMap: oakRoughMap,
+    bumpMap: oakBumpMap,
+    bumpScale: 0.0021,
+    roughness: 0.48,
+    metalness: 0.02,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.17,
+    envMap: hdriEnvMap,
+    envMapIntensity: 0.65,
+    reflectivity: 0.45
+  });
+
+  // ---------- Room shell ----------
+  const room = new THREE.Group();
+  scene.add(room);
+
+  // Floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, L), floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.set(0, 0, 0);
+  floor.receiveShadow = true;
+  room.add(floor);
+
+  // Ceiling
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(W, L), ceilMat);
+  ceiling.rotation.x = Math.PI/2;
+  ceiling.position.set(0, H, 0);
+  ceiling.receiveShadow = true;
+  room.add(ceiling);
+
+  // Back wall (north, -z)
+  const backWall = new THREE.Mesh(new THREE.PlaneGeometry(W, H), backWallMat);
+  backWall.position.set(0, H/2, -halfL);
+  backWall.receiveShadow = true;
+  room.add(backWall);
+
+  // Left wall (west, -x) — kept blank, now backing the sofa
+  const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(L, H), wallMat);
+  leftWall.rotation.y = Math.PI/2;
+  leftWall.position.set(-halfW, H/2, 0);
+  leftWall.receiveShadow = true;
+  room.add(leftWall);
+
+  // Right wall (east, +x) — will host the window
+  const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(L, H), wallMat);
+  rightWall.rotation.y = -Math.PI/2;
+  rightWall.position.set(halfW, H/2, 0);
+  rightWall.receiveShadow = true;
+  room.add(rightWall);
+
+  // South wall (+z) — closes off the open side behind the sofa, same
+  // material/finish as the left and right walls.
+  const southWall = new THREE.Mesh(new THREE.PlaneGeometry(W, H), wallMat);
+  southWall.rotation.y = Math.PI;
+  southWall.position.set(0, H/2, halfL);
+  southWall.receiveShadow = true;
+  room.add(southWall);
+
+  // Thin baseboard strip along the walls for a touch of architectural precision
+  function baseboard(length, rotY, x, z){
+    const bb = new THREE.Mesh(new THREE.PlaneGeometry(length, 0.09), new THREE.MeshStandardMaterial({color:0xece5d7, roughness:0.9}));
+    bb.rotation.y = rotY;
+    bb.position.set(x, 0.045, z);
+    room.add(bb);
+  }
+  baseboard(W, 0, 0, -halfL + 0.001);
+  baseboard(L, Math.PI/2, -halfW + 0.001, 0);
+  baseboard(L, -Math.PI/2, halfW - 0.001, 0);
+  baseboard(W, Math.PI, 0, halfL - 0.001);
+
+  // ---------- Christmas string lights, wrapped around the ceiling perimeter ----------
+  // A single continuous strand of small red/green/warm-white bulbs run
+  // along all four ceiling/wall seams, following the room's real corners
+  // (traced as one closed rectangular loop matching W/L/H) rather than a
+  // flat overlay pasted over the view. Same approach as the desk-leg
+  // strand elsewhere in the scene: built once, always present, every
+  // bulb/glow/point-light starts at zero intensity/opacity and is only
+  // ever driven above zero by the render loop below, gated to
+  // currentTheme === "christmas" and faded by the same opacity the
+  // Christmas toggle already animates for the window photo — so this
+  // strand arrives and leaves in lockstep with everything else the toggle
+  // controls, and is completely inert (and invisible) in every other theme.
+  {
+    // Positioned exactly at the wall/ceiling seam — right at the true
+    // ceiling height and right at the true wall planes (halfW/halfL) —
+    // with only a hair's epsilon pulled in/down to avoid z-fighting with
+    // the ceiling and wall meshes, so the strand reads as sitting flush in
+    // the crease rather than floating below the ceiling or lying on the
+    // wall face.
+    const ceilLightY = H - 0.008;
+    const ceilInset = 0.008;
+    const clx = halfW - ceilInset;
+    const clz = halfL - ceilInset;
+
+    // Local copies of the bulb-color palette and soft-glow texture (kept
+    // self-contained here rather than reusing the desk strand's versions,
+    // since those are declared inside their own scoped block further down
+    // and aren't in scope yet at this point in the room build).
+    function makeCeilBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const ceilBulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const ceilBulbGlowTex = makeCeilBulbGlowTexture();
+    const ceilBulbCoreTex = makeXmasBulbCoreTexture();
+    // Lighter, whiter-hot tint for each color's bright core sprite — real
+    // colored bulbs still show a near-white hotspot right at the emitter,
+    // with the full color only reading in the glass/halo around it.
+    const ceilBulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
+    const ceilBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const ceilBulbMats = ceilBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const ceilBulbGlowMats = ceilBulbColors.map(c => new THREE.SpriteMaterial({
+      map: ceilBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    const ceilBulbCoreMats = ceilBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: ceilBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    ceilingChristmasLights = { bulbMats: ceilBulbMats, bulbGlowMats: ceilBulbGlowMats, bulbCoreMats: ceilBulbCoreMats, pointLights: [] };
+
+    // One continuous loop tracing the four ceiling/wall seams, corner to
+    // corner, so the strand looks physically run around the room rather
+    // than four independent segments. Order: back wall (-z) left->right,
+    // right wall (+x) back->front, front/south wall (+z) right->left,
+    // left wall (-x) front->back, closing the loop.
+    const ceilBulbSpacing = 0.22; // average spacing along the strand, meters
+    const ceilSegments = [
+      { x0: -clx, z0: -clz, x1: clx,  z1: -clz }, // back wall seam
+      { x0: clx,  z0: -clz, x1: clx,  z1: clz  }, // right wall seam
+      { x0: clx,  z0: clz,  x1: -clx, z1: clz  }, // front wall seam
+      { x0: -clx, z0: clz,  x1: -clx, z1: -clz } // left wall seam
+    ];
+
+    let colorIdx = 0;
+    ceilSegments.forEach(seg => {
+      const segLen = Math.hypot(seg.x1 - seg.x0, seg.z1 - seg.z0);
+      const count = Math.max(2, Math.round(segLen / ceilBulbSpacing));
+      // Slightly irregular spacing (endpoints pinned to the true corners)
+      // so bulbs don't land on a perfectly even grid, like a strand that
+      // was actually run by hand along the seam.
+      const tArr = xmasJitteredT(count, 0.3);
+      for(let i=0;i<count;i++){
+        const tt = tArr[i];
+        const x = seg.x0 + (seg.x1 - seg.x0) * tt;
+        const z = seg.z0 + (seg.z1 - seg.z0) * tt;
+        // No sag: the strand runs perfectly flush along the wall/ceiling
+        // seam at constant height throughout, rather than dipping below
+        // the ceiling line between hook points.
+        const y = ceilLightY;
+
+        const ci = colorIdx % ceilBulbColors.length;
+        colorIdx++;
+        // Fixed (not animated) per-bulb brightness roll, expressed as a
+        // small size difference across the bulb/halo/core so the strand
+        // reads as individually-wattage'd bulbs rather than clones —
+        // without needing a unique material (and material write) per bulb.
+        const bright = xmasBulbBrightness();
+        const bulb = new THREE.Mesh(ceilBulbGeo, ceilBulbMats[ci]);
+        bulb.position.set(x, y, z);
+        bulb.scale.setScalar(0.85 + bright*0.2);
+        room.add(bulb);
+        const glow = new THREE.Sprite(ceilBulbGlowMats[ci]);
+        glow.scale.set(0.05*bright, 0.05*bright, 1);
+        glow.position.set(x, y, z);
+        room.add(glow);
+        const core = new THREE.Sprite(ceilBulbCoreMats[ci]);
+        core.scale.set(0.016*bright, 0.016*bright, 1);
+        core.position.set(x, y, z);
+        room.add(core);
+      }
+    });
+
+    // Soft, low-intensity point lights spaced around the loop so the
+    // strand casts a faint warm wash onto the nearby ceiling and upper
+    // walls, rather than only reading as glowing sprites — two per wall
+    // (at roughly the quarter-points) rather than one dead-center, so the
+    // spill reads as coming from the strand's actual bulbs along its
+    // length instead of one bright hotspot per wall. Short falloff
+    // distance (physically-correct inverse-square decay) keeps each pool
+    // small and cozy instead of washing out the room.
+    const ceilLightPositions = [];
+    ceilSegments.forEach(seg => {
+      [0.25, 0.75].forEach(t => {
+        ceilLightPositions.push({
+          x: seg.x0 + (seg.x1 - seg.x0) * t,
+          z: seg.z0 + (seg.z1 - seg.z0) * t
+        });
+      });
+    });
+    ceilLightPositions.forEach(p => {
+      const pl = new THREE.PointLight(0xffdca0, 0, 1.5, 2.0);
+      pl.position.set(p.x, ceilLightY, p.z);
+      room.add(pl);
+      ceilingChristmasLights.pointLights.push(pl);
+    });
+  }
+
+  // ---------- Gallery wall — framed pictures on the west (left) wall, ----------
+  // ---------- directly across the room from the window on the east wall. ----------
+  // Five evenly-spaced slots run along the wall's length (z-axis); filled in
+  // one at a time as images are provided. Order runs left-to-right as seen
+  // by someone standing in the room facing this wall (i.e. +z/south end is
+  // slot 1, -z/north end is slot 5).
+  const galleryWallX = -halfW + 0.03;   // just proud of the wall face
+  const galleryY      = 1.52;           // center height of each frame — 60in/1.52m, the standard "eye level" gallery-hanging height, even at the larger size
+  const gallerySlotZ  = [2.08, 0.73, -0.62, -1.97, -3.32]; // slot 1 -> slot 5, re-spaced for the wider frames
+
+  const textureLoader = new THREE.TextureLoader();
+
+  // ---------- Shared frame materials: premium matte black brushed aluminum + real glass ----------
+  // Brushed metal color/roughness/bump maps: fine directional brushing (mostly
+  // vertical strokes, like a real anodized aluminum extrusion), subtle warm/cool
+  // fleck variation, and a soft diagonal sheen so it reads as metal, not paint.
+  function makeBrushedMetalMaps(size){
+    const colorCanvas = document.createElement('canvas');
+    colorCanvas.width = colorCanvas.height = size;
+    const cctx = colorCanvas.getContext('2d');
+    const base = '#17181a'; // matte black aluminum, very slightly warm-neutral
+    cctx.fillStyle = base;
+    cctx.fillRect(0, 0, size, size);
+
+    // fine brushed strokes running vertically, varying opacity for a satin streak look
+    for(let i=0; i<900; i++){
+      const x = Math.random()*size;
+      const v = 18 + Math.random()*34; // lightness of the stroke
+      cctx.strokeStyle = `rgba(${v},${v},${v+2},${0.03 + Math.random()*0.05})`;
+      cctx.lineWidth = 0.5 + Math.random()*1.1;
+      cctx.beginPath();
+      cctx.moveTo(x, 0);
+      cctx.lineTo(x + (Math.random()-0.5)*3, size);
+      cctx.stroke();
+    }
+    // soft diagonal sheen band (the shifting highlight brushed metal shows under light)
+    const sheen = cctx.createLinearGradient(0, 0, size, size);
+    sheen.addColorStop(0.35, 'rgba(255,255,255,0)');
+    sheen.addColorStop(0.5, 'rgba(210,212,218,0.10)');
+    sheen.addColorStop(0.65, 'rgba(255,255,255,0)');
+    cctx.fillStyle = sheen;
+    cctx.fillRect(0, 0, size, size);
+
+    const colorMap = new THREE.CanvasTexture(colorCanvas);
+    colorMap.wrapS = colorMap.wrapT = THREE.RepeatWrapping;
+    colorMap.repeat.set(1, 6);
+    colorMap.encoding = THREE.sRGBEncoding;
+
+    // roughness map: mostly low (brushed aluminum is fairly reflective) with
+    // fine per-stroke variation so it isn't a mirror
+    const roughCanvas = document.createElement('canvas');
+    roughCanvas.width = roughCanvas.height = size;
+    const rctx = roughCanvas.getContext('2d');
+    rctx.fillStyle = 'rgb(110,110,110)'; // ~0.43 base roughness
+    rctx.fillRect(0, 0, size, size);
+    for(let i=0; i<900; i++){
+      const x = Math.random()*size;
+      const v = 90 + Math.random()*60;
+      rctx.strokeStyle = `rgba(${v},${v},${v},0.5)`;
+      rctx.lineWidth = 0.5 + Math.random()*1.1;
+      rctx.beginPath();
+      rctx.moveTo(x, 0);
+      rctx.lineTo(x + (Math.random()-0.5)*3, size);
+      rctx.stroke();
+    }
+    const roughMap = new THREE.CanvasTexture(roughCanvas);
+    roughMap.wrapS = roughMap.wrapT = THREE.RepeatWrapping;
+    roughMap.repeat.set(1, 6);
+
+    // bump map: the same brushed strokes as fine relief, so grazing light
+    // catches individual brush lines
+    const bumpCanvas = document.createElement('canvas');
+    bumpCanvas.width = bumpCanvas.height = size;
+    const bctx = bumpCanvas.getContext('2d');
+    bctx.fillStyle = 'rgb(128,128,128)';
+    bctx.fillRect(0, 0, size, size);
+    for(let i=0; i<900; i++){
+      const x = Math.random()*size;
+      const v = 110 + Math.random()*40;
+      bctx.strokeStyle = `rgba(${v},${v},${v},0.6)`;
+      bctx.lineWidth = 0.5 + Math.random()*1.1;
+      bctx.beginPath();
+      bctx.moveTo(x, 0);
+      bctx.lineTo(x + (Math.random()-0.5)*3, size);
+      bctx.stroke();
+    }
+    const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+    bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+    bumpMap.repeat.set(1, 6);
+
+    return { colorMap, roughMap, bumpMap };
+  }
+  const brushedMetal = makeBrushedMetalMaps(512);
+
+  // ---------- Reusable "real object" texture generators ----------
+  // Everything below exists to pull specific props (floating shelves, the
+  // task chair, the PC tower, wall plaster) up to the same level of detail
+  // as the floor/desk/couch/coffee table already have — those were flat
+  // single-color materials with no maps at all, which is what reads as
+  // "simple Three.js shapes" next to everything else in the room.
+
+  // Satin-painted wood: a solid paint color (used for the red floating
+  // shelves) but with faint grain streaks showing through the finish, tiny
+  // paint-pooling variation, and worn/chipped edges — a painted shelf in
+  // real life is never one flat, perfectly even color.
+  function makePaintedWoodMaps(size, hex){
+    const cc = document.createElement('canvas'); cc.width = cc.height = size;
+    const cctx = cc.getContext('2d');
+    cctx.fillStyle = hex; cctx.fillRect(0,0,size,size);
+    // Faint grain streaks bleeding through the paint film
+    for(let i=0;i<140;i++){
+      const y = Math.random()*size;
+      const amt = (Math.random()<0.5 ? -1 : 1) * (6 + Math.random()*14);
+      const c = shadeHex(hex, amt);
+      cctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${0.05+Math.random()*0.09})`;
+      cctx.lineWidth = 0.6 + Math.random()*1.4;
+      cctx.beginPath();
+      let x0 = 0, y0 = y + (Math.random()-0.5)*10;
+      cctx.moveTo(x0,y0);
+      for(let x=0;x<=size;x+=size/10){
+        y0 += (Math.random()-0.5)*6;
+        cctx.lineTo(x,y0);
+      }
+      cctx.stroke();
+    }
+    // Soft paint-pooling blotches (very subtle sheen variation)
+    for(let i=0;i<10;i++){
+      const x=Math.random()*size, y=Math.random()*size, r=size*(0.12+Math.random()*0.2);
+      const g = cctx.createRadialGradient(x,y,0,x,y,r);
+      const dark = Math.random()<0.5;
+      g.addColorStop(0, dark ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      cctx.fillStyle = g; cctx.fillRect(0,0,size,size);
+    }
+    // Worn/chipped edges along the top and bottom (where hands and objects
+    // contact a shelf most) — small light nicks exposing a hint of raw wood.
+    for(let i=0;i<26;i++){
+      const edge = Math.random()<0.5 ? 0 : 1;
+      const x = Math.random()*size;
+      const y = edge===0 ? Math.random()*size*0.06 : size - Math.random()*size*0.06;
+      const r = 1.5 + Math.random()*3;
+      cctx.fillStyle = 'rgba(196,164,120,0.35)';
+      cctx.beginPath(); cctx.ellipse(x,y,r,r*0.5,Math.random()*Math.PI,0,Math.PI*2); cctx.fill();
+    }
+    const colorMap = new THREE.CanvasTexture(cc);
+    colorMap.encoding = THREE.sRGBEncoding;
+    colorMap.wrapS = colorMap.wrapT = THREE.RepeatWrapping;
+
+    const rc = document.createElement('canvas'); rc.width = rc.height = size;
+    const rctx = rc.getContext('2d');
+    rctx.fillStyle = 'rgb(130,130,130)'; rctx.fillRect(0,0,size,size);
+    const rimg = rctx.getImageData(0,0,size,size);
+    for(let i=0;i<rimg.data.length;i+=4){
+      const n = clamp255(130 + (Math.random()-0.5)*40);
+      rimg.data[i]=rimg.data[i+1]=rimg.data[i+2]=n; rimg.data[i+3]=255;
+    }
+    rctx.putImageData(rimg,0,0);
+    const roughMap = new THREE.CanvasTexture(rc);
+    roughMap.wrapS = roughMap.wrapT = THREE.RepeatWrapping;
+
+    const bc = document.createElement('canvas'); bc.width = bc.height = size;
+    const bctx = bc.getContext('2d');
+    bctx.fillStyle = 'rgb(128,128,128)'; bctx.fillRect(0,0,size,size);
+    for(let i=0;i<70;i++){
+      const y = Math.random()*size;
+      bctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      bctx.lineWidth = 1 + Math.random();
+      bctx.beginPath(); bctx.moveTo(0,y); bctx.lineTo(size,y+(Math.random()-0.5)*20); bctx.stroke();
+    }
+    const bumpMap = new THREE.CanvasTexture(bc);
+    bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+
+    return { colorMap, roughMap, bumpMap };
+  }
+
+  // Simple knit/mesh fabric: a woven crosshatch, used for the task chair's
+  // back/seat mesh and for knit clothing (hoodie, beanie) so those surfaces
+  // read as actual textile instead of flat matte plastic.
+  function makeKnitFabricMaps(size, hex){
+    const cc = document.createElement('canvas'); cc.width = cc.height = size;
+    const cctx = cc.getContext('2d');
+    cctx.fillStyle = hex; cctx.fillRect(0,0,size,size);
+    const cell = size / 24;
+    for(let y=0;y<24;y++){
+      for(let x=0;x<24;x++){
+        const shade = ((x+y)%2===0) ? 10 : -10;
+        const c = shadeHex(hex, shade + (Math.random()-0.5)*8);
+        cctx.fillStyle = `rgba(${c.r},${c.g},${c.b},0.5)`;
+        cctx.fillRect(x*cell, y*cell, cell*0.92, cell*0.92);
+      }
+    }
+    const colorMap = new THREE.CanvasTexture(cc);
+    colorMap.encoding = THREE.sRGBEncoding;
+    colorMap.wrapS = colorMap.wrapT = THREE.RepeatWrapping;
+
+    const bc = document.createElement('canvas'); bc.width = bc.height = size;
+    const bctx = bc.getContext('2d');
+    bctx.fillStyle = 'rgb(128,128,128)'; bctx.fillRect(0,0,size,size);
+    for(let y=0;y<24;y++){
+      for(let x=0;x<24;x++){
+        const v = 128 + (((x+y)%2===0) ? 26 : -26);
+        bctx.fillStyle = `rgb(${v},${v},${v})`;
+        bctx.fillRect(x*cell, y*cell, cell*0.9, cell*0.9);
+      }
+    }
+    const bumpMap = new THREE.CanvasTexture(bc);
+    bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+    return { colorMap, bumpMap };
+  }
+
+  // Subtle wall/ceiling plaster: real painted drywall isn't a perfectly
+  // even, perfectly flat plane — faint roller-nap stipple and the
+  // occasional soft joint-compound undulation. Kept extremely subtle;
+  // this should read as "a real wall" only at a grazing glance, not as a
+  // visible pattern.
+  function makePlasterMaps(size, hex){
+    const rc = document.createElement('canvas'); rc.width = rc.height = size;
+    const rctx = rc.getContext('2d');
+    rctx.fillStyle = 'rgb(150,150,150)'; rctx.fillRect(0,0,size,size);
+    const rimg = rctx.getImageData(0,0,size,size);
+    for(let i=0;i<rimg.data.length;i+=4){
+      const n = clamp255(150 + (Math.random()-0.5)*14);
+      rimg.data[i]=rimg.data[i+1]=rimg.data[i+2]=n; rimg.data[i+3]=255;
+    }
+    rctx.putImageData(rimg,0,0);
+    const roughMap = new THREE.CanvasTexture(rc);
+    roughMap.wrapS = roughMap.wrapT = THREE.RepeatWrapping;
+
+    const bc = document.createElement('canvas'); bc.width = bc.height = size;
+    const bctx = bc.getContext('2d');
+    bctx.fillStyle = 'rgb(128,128,128)'; bctx.fillRect(0,0,size,size);
+    const bimg = bctx.getImageData(0,0,size,size);
+    for(let i=0;i<bimg.data.length;i+=4){
+      const n = clamp255(128 + (Math.random()-0.5)*10);
+      bimg.data[i]=bimg.data[i+1]=bimg.data[i+2]=n; bimg.data[i+3]=255;
+    }
+    bctx.putImageData(bimg,0,0);
+    // A couple of very soft, large undulations (drywall-mud waviness)
+    for(let i=0;i<4;i++){
+      const x=Math.random()*size, y=Math.random()*size, r=size*(0.3+Math.random()*0.3);
+      const g = bctx.createRadialGradient(x,y,0,x,y,r);
+      g.addColorStop(0, 'rgba(255,255,255,0.04)');
+      g.addColorStop(1, 'rgba(128,128,128,0)');
+      bctx.fillStyle = g; bctx.fillRect(0,0,size,size);
+    }
+    const bumpMap = new THREE.CanvasTexture(bc);
+    bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+    return { roughMap, bumpMap };
+  }
+
+  // Glass overlay maps: a very faint frosted/streak roughness variation (so the
+  // reflection isn't perfectly crisp everywhere), a soft diagonal glare band,
+  // and a scatter of translucent fingerprint smudges + a couple of partial
+  // prints near the edges where a frame actually gets touched.
+  function makeGlassRoughnessMap(size){
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgb(12,12,12)'; // very low roughness — clear glass
+    ctx.fillRect(0, 0, size, size);
+    for(let i=0; i<40; i++){
+      const x = Math.random()*size, y = Math.random()*size;
+      const r = 10 + Math.random()*40;
+      const v = 20 + Math.random()*40;
+      const grad = ctx.createRadialGradient(x,y,0,x,y,r);
+      grad.addColorStop(0, `rgba(${v},${v},${v},0.4)`);
+      grad.addColorStop(1, `rgba(${v},${v},${v},0)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, size, size);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
+  function makeGlassGlareMap(size){
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+
+    // soft diagonal glare sweep, brighter at one corner like a window reflection
+    const glare = ctx.createLinearGradient(0, size, size*0.55, 0);
+    glare.addColorStop(0.0, 'rgba(255,255,255,0)');
+    glare.addColorStop(0.42, 'rgba(255,255,255,0.02)');
+    glare.addColorStop(0.52, 'rgba(255,255,255,0.16)');
+    glare.addColorStop(0.6, 'rgba(255,255,255,0.03)');
+    glare.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glare;
+    ctx.fillRect(0, 0, size, size);
+
+    // fingerprint smudges: soft translucent ellipses with a faint ridged core,
+    // clustered slightly toward the lower corners as if from handling
+    function smudge(x, y, r, alpha){
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(235,230,215,${alpha})`);
+      grad.addColorStop(0.55, `rgba(235,230,215,${alpha*0.45})`);
+      grad.addColorStop(1, 'rgba(235,230,215,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r*0.8, Math.random()*Math.PI, 0, Math.PI*2);
+      ctx.fill();
+    }
+    const clusters = [
+      [size*0.86, size*0.9], [size*0.14, size*0.88], [size*0.5, size*0.06]
+    ];
+    clusters.forEach(([cx, cy])=>{
+      const n = 3 + Math.floor(Math.random()*3);
+      for(let i=0; i<n; i++){
+        const x = cx + (Math.random()-0.5)*size*0.14;
+        const y = cy + (Math.random()-0.5)*size*0.1;
+        const r = size*(0.012 + Math.random()*0.02);
+        smudge(x, y, r, 0.05 + Math.random()*0.06);
+      }
+    });
+    // a couple of stray light smudges elsewhere on the pane
+    for(let i=0; i<4; i++){
+      smudge(Math.random()*size, Math.random()*size, size*(0.01+Math.random()*0.015), 0.03+Math.random()*0.04);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+  const glassRoughMap = makeGlassRoughnessMap(256);
+  const glassGlareTex = makeGlassGlareMap(1024);
+
+  function makeFramedPicture(imgUrl, artW, artH, matBorder, frameBorder, frameColor){
+    const group = new THREE.Group();
+
+    const outerW = artW + matBorder * 2 + frameBorder * 2;
+    const outerH = artH + matBorder * 2 + frameBorder * 2;
+    const matW   = artW + matBorder * 2;
+    const matH   = artH + matBorder * 2;
+    const frameDepth = 0.045;
+
+    // Frame molding — premium matte black brushed aluminum: metallic base,
+    // brushed-streak roughness/bump maps, and a touch of clearcoat so it
+    // catches soft highlights without ever looking glossy/painted.
+    const frameMatLocal = new THREE.MeshPhysicalMaterial({
+      color: frameColor,
+      map: brushedMetal.colorMap,
+      roughnessMap: brushedMetal.roughMap,
+      bumpMap: brushedMetal.bumpMap,
+      bumpScale: 0.0006,
+      roughness: 0.5,
+      metalness: 0.92,
+      envMap: hdriEnvMap,
+      envMapIntensity: 0.9,
+      clearcoat: 0.12,
+      clearcoatRoughness: 0.45
+    });
+    const frameOuter = new THREE.Mesh(new THREE.BoxGeometry(outerW, outerH, frameDepth), frameMatLocal);
+    frameOuter.position.z = frameDepth / 2;
+    frameOuter.castShadow = true;
+    frameOuter.receiveShadow = true;
+    group.add(frameOuter);
+
+    // Beveled edge highlights: thin, brighter brushed-aluminum strips along the
+    // frame's inner lip (where it meets the mat) — a real aluminum molding has
+    // a crisp machined bevel here that catches a bright edge highlight.
+    const edgeHighlightMat = new THREE.MeshPhysicalMaterial({
+      color: 0x3a3d42,
+      map: brushedMetal.colorMap,
+      roughnessMap: brushedMetal.roughMap,
+      roughness: 0.28,
+      metalness: 0.95,
+      envMap: hdriEnvMap,
+      envMapIntensity: 1.4,
+      clearcoat: 0.3,
+      clearcoatRoughness: 0.2
+    });
+    const bevelT = 0.004; // thickness of the highlight strip
+    const bevelZ = frameDepth - 0.001;
+    const innerW = outerW - frameBorder*2*0.12; // sits just inside the outer face, near the mat
+    const innerH = outerH - frameBorder*2*0.12;
+    const bevelTop = new THREE.Mesh(new THREE.BoxGeometry(innerW, bevelT, 0.003), edgeHighlightMat);
+    bevelTop.position.set(0, innerH/2 - bevelT/2, bevelZ);
+    const bevelBottom = bevelTop.clone();
+    bevelBottom.position.y = -(innerH/2 - bevelT/2);
+    const bevelLeft = new THREE.Mesh(new THREE.BoxGeometry(bevelT, innerH, 0.003), edgeHighlightMat);
+    bevelLeft.position.set(-(innerW/2 - bevelT/2), 0, bevelZ);
+    const bevelRight = bevelLeft.clone();
+    bevelRight.position.x = innerW/2 - bevelT/2;
+    group.add(bevelTop, bevelBottom, bevelLeft, bevelRight);
+
+    // White mat board, recessed slightly in front of the frame
+    const matMatLocal = new THREE.MeshStandardMaterial({ color: 0xf7f4ec, roughness: 0.9 });
+    const matBoard = new THREE.Mesh(new THREE.PlaneGeometry(matW, matH), matMatLocal);
+    matBoard.position.z = frameDepth + 0.001;
+    group.add(matBoard);
+
+    // Artwork print
+    const tex = textureLoader.load(imgUrl);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 8;
+    const artMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 });
+    const artPlane = new THREE.Mesh(new THREE.PlaneGeometry(artW, artH), artMat);
+    artPlane.position.z = frameDepth + 0.002;
+    group.add(artPlane);
+
+    // True glass pane — sits just proud of the mat/art, covering the whole
+    // opening like a real picture-frame glazing. Physical transmission gives
+    // real refraction/reflection of the room; a touch of clearcoat adds the
+    // extra crisp specular "glass" glint on top of the transmissive body.
+    const glassW = matW - 0.004;
+    const glassH = matH - 0.004;
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      transmission: 0.94,
+      transparent: true,
+      opacity: 1,
+      roughness: 0.05,
+      roughnessMap: glassRoughMap,
+      metalness: 0,
+      ior: 1.52,
+      thickness: 0.01,
+      envMap: hdriEnvMap,
+      envMapIntensity: 1.1,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.08,
+      reflectivity: 0.5
+    });
+    const glassPane = new THREE.Mesh(new THREE.PlaneGeometry(glassW, glassH), glassMat);
+    glassPane.position.z = frameDepth + 0.006;
+    group.add(glassPane);
+
+    // Glare + fingerprint overlay: a separate transparent plane just in front
+    // of the glass carrying the soft diagonal window-glare sweep and the
+    // faint handling smudges, so they read as sitting ON the glass surface.
+    const glareMat = new THREE.MeshBasicMaterial({
+      map: glassGlareTex,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false
+    });
+    const glarePlane = new THREE.Mesh(new THREE.PlaneGeometry(glassW, glassH), glareMat);
+    glarePlane.position.z = frameDepth + 0.0065;
+    group.add(glarePlane);
+
+
+
+    // Thin shadow-casting lip so the frame reads as slightly 3D against the wall
+    const lipGeo = new THREE.BoxGeometry(outerW + 0.01, outerH + 0.01, 0.006);
+    const lip = new THREE.Mesh(lipGeo, new THREE.MeshStandardMaterial({ color: 0x000000, transparent: true, opacity: 0.12 }));
+    lip.position.z = -0.004;
+    group.add(lip);
+
+    return group;
+  }
+
+  function hangPicture(slotIndex, imgUrl, artW, artH, opts){
+    opts = opts || {};
+    const pic = makeFramedPicture(
+      imgUrl, artW, artH,
+      opts.matBorder !== undefined ? opts.matBorder : 0.035,
+      opts.frameBorder !== undefined ? opts.frameBorder : 0.03,
+      opts.frameColor !== undefined ? opts.frameColor : 0x1a1a1a
+    );
+    pic.rotation.y = Math.PI / 2; // face into the room, matching the west wall's normal
+    pic.position.set(galleryWallX, galleryY, gallerySlotZ[slotIndex]);
+    room.add(pic);
+    return pic;
+  }
+
+  // Slot 1 of 5 — "Play Your Cards Right" wildcard art
+  hangPicture(0, 'images/image_007.webp', 0.895, 1.22, {
+    matBorder: 0.06, frameBorder: 0.022, frameColor: 0x141414
+  });
+
+  // Slot 2 of 5 — "Face Your Fears" wildcard art
+  hangPicture(1, 'images/image_008.webp', 0.895, 1.22, {
+    matBorder: 0.06, frameBorder: 0.022, frameColor: 0x141414
+  });
+
+  // Slot 3 of 5 — "Ignore the Noise" wildcard art
+  hangPicture(2, 'images/image_009.webp', 0.895, 1.22, {
+    matBorder: 0.06, frameBorder: 0.022, frameColor: 0x141414
+  });
+
+  // Slot 4 of 5 — "Grow Through What You Go Through" wildcard art
+  hangPicture(3, 'images/image_010.webp', 0.895, 1.22, {
+    matBorder: 0.06, frameBorder: 0.022, frameColor: 0x141414
+  });
+
+  // Slot 5 of 5 — "Trust the Process" wildcard art
+  hangPicture(4, 'images/image_011.webp', 0.895, 1.22, {
+    matBorder: 0.06, frameBorder: 0.022, frameColor: 0x141414
+  });
+
+
+  // Contact-shadow texture is needed by the coffee table below, so it's
+  // created here even though the rest of makeContactShadowTexture's helper
+  // (addContactShadow) is defined further down near the window trim.
+  const contactShadowTex = makeContactShadowTexture();
+
+  // ---------- Checkerboard rug — covers the middle of the room, starting ----------
+  // ---------- behind the desk chair and running under the clothing rack. ----------
+  // ---------- The desk/TV corner near the back wall stays bare concrete. ----------
+  let rugCenterZGlobal = 0; // shared with the imported table below, so it can center itself on the rug
+  {
+    const rugMarginSide = 0.10;       // small inset from the side walls
+
+    // The task/gaming chair (built later, against the back wall near the
+    // desk) sits at local chairZ = deskD + 0.62 = 1.62, offset from the
+    // desk setup's origin at (-halfL + 0.04); its star-base casters reach
+    // about 0.28m in every direction, so this is the chair's far edge —
+    // the side facing away from the desk, into the room.
+    const chairFarZ = (-halfL + 0.04) + (1.0 + 0.62) + 0.28;
+    const chairGap = 0.18;            // clear buffer of bare floor behind the chair
+    const rugStartZ = chairFarZ + chairGap;
+
+    // The clothing rack sits at rackCenterZ = 1.85 with a 1.5m rail length,
+    // so its far edge (away from the back wall) is at 1.85 + 0.75 = 2.60.
+    const rackFarZ = 1.85 + 0.75;
+    const rackGap = 0.25;             // margin past the rack, keeping the rug short of the front wall
+    const rugEndZ = rackFarZ + rackGap;
+
+    const rugDepth = rugEndZ - rugStartZ;
+    const rugWidth = W - rugMarginSide * 2;
+
+    // Pick a tile size that divides evenly-ish into both dimensions so the
+    // checker squares read as true squares rather than stretched rectangles.
+    const targetTile = 0.33;
+    const cols = Math.max(2, Math.round(rugWidth / targetTile));
+    const rows = Math.max(2, Math.round(rugDepth / targetTile));
+
+    function checkerTexture(colsN, rowsN, colorA, colorB){
+      const cell = 64;
+      const c = document.createElement('canvas');
+      c.width = colsN * cell; c.height = rowsN * cell;
+      const ctx = c.getContext('2d');
+      for(let r=0; r<rowsN; r++){
+        for(let ci=0; ci<colsN; ci++){
+          ctx.fillStyle = ((r + ci) % 2 === 0) ? colorA : colorB;
+          ctx.fillRect(ci*cell, r*cell, cell, cell);
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.anisotropy = 4;
+      return tex;
+    }
+
+    const rugTex = checkerTexture(cols, rows, '#2c2620', '#f1ece1');
+
+    // Fine fiber detail: a tiled normal map built from thousands of short,
+    // randomly-angled strokes so light catches individual pile fibers
+    // rather than a perfectly smooth plane, plus a matching roughness map
+    // so some strands read matte and others catch a little sheen — the
+    // way real wool/wool-blend pile scatters light unevenly.
+    function fiberNormalTexture(size){
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgb(128,128,255)';
+      ctx.fillRect(0, 0, size, size);
+      const strands = Math.floor(size * size / 3.2);
+      for(let i=0; i<strands; i++){
+        const x = Math.random()*size, y = Math.random()*size;
+        const ang = Math.random()*Math.PI*2;
+        const len = 1.5 + Math.random()*3.5;
+        const push = 30 + Math.random()*55;
+        const nx = 128 + Math.cos(ang+Math.PI/2)*push;
+        const ny = 128 + Math.sin(ang+Math.PI/2)*push;
+        ctx.strokeStyle = `rgb(${nx|0},${ny|0},255)`;
+        ctx.lineWidth = 1 + Math.random();
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(ang)*len, y + Math.sin(ang)*len);
+        ctx.stroke();
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function fiberRoughnessTexture(size){
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      for(let i=0; i<size*size; i++){
+        const v = Math.max(150, Math.min(255, 205 + (Math.random()-0.5)*110));
+        img.data[i*4] = img.data[i*4+1] = img.data[i*4+2] = v;
+        img.data[i*4+3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    const rugFiberNormal = fiberNormalTexture(256);
+    rugFiberNormal.repeat.set(cols * 5, rows * 5);
+    const rugFiberRough = fiberRoughnessTexture(128);
+    rugFiberRough.repeat.set(cols * 5, rows * 5);
+
+    // Real thickness: the pile stands proud of the floor as a shallow slab
+    // instead of a paper-thin decal, so it casts and receives its own
+    // contact shadow and the checker squares read as woven tufts rather
+    // than a printed pattern.
+    const rugThickness = 0.014;
+    const rugTopMat = new THREE.MeshStandardMaterial({
+      map: rugTex,
+      normalMap: rugFiberNormal, normalScale: new THREE.Vector2(0.6, 0.6),
+      roughnessMap: rugFiberRough, roughness: 1.0, metalness: 0.0
+    });
+    const rugEdgeMat = new THREE.MeshStandardMaterial({ color: '#4c4238', roughness: 0.97, metalness: 0.0 });
+    const rugMats = [rugEdgeMat, rugEdgeMat, rugTopMat, rugEdgeMat, rugEdgeMat, rugEdgeMat];
+    const rug = new THREE.Mesh(new THREE.BoxGeometry(rugWidth, rugThickness, rugDepth), rugMats);
+    rug.position.set(0, rugThickness/2 + 0.002, (rugStartZ + rugEndZ)/2);
+    rug.receiveShadow = true;
+    rug.castShadow = true;
+    room.add(rug);
+    rugCenterZGlobal = (rugStartZ + rugEndZ) / 2;
+  }
+
+  // ---------- Coffee table: organic "cloud" shape, glossy cream lacquer ----------
+  // Built procedurally as a smooth closed blob (matching the reference photo's
+  // biomorphic silhouette) extruded into a thick rounded slab, set on three
+  // chunky cylindrical legs — two clustered together, one standing apart.
+  // Centered on the rug, same way the previous imported piece was.
+  {
+    // Perimeter control points (meters) tracing the cloud/pebble outline,
+    // asymmetric like the reference: a rounded lobe to the +x side, a longer
+    // tapering sweep to the -x side, gentle waves along both long edges.
+    const outline = [
+      [ 0.66,  0.06], [ 0.63,  0.20], [ 0.50,  0.30], [ 0.34,  0.27],
+      [ 0.18,  0.33], [ 0.00,  0.30], [-0.16,  0.34], [-0.34,  0.27],
+      [-0.50,  0.18], [-0.62,  0.04], [-0.66, -0.12], [-0.56, -0.25],
+      [-0.38, -0.31], [-0.18, -0.25], [ 0.02, -0.31], [ 0.22, -0.28],
+      [ 0.40, -0.26], [ 0.56, -0.16]
+    ];
+
+    const curvePts = outline.map(p => new THREE.Vector3(p[0], p[1], 0));
+    const curve = new THREE.CatmullRomCurve3(curvePts, true, 'catmullrom', 0.55);
+    const smoothPts = curve.getPoints(160).map(p => new THREE.Vector2(p.x, p.y));
+
+    const topShape = new THREE.Shape(smoothPts);
+
+    const topThickness = 0.045;   // slab thickness
+    const legHeight     = 0.375;  // floor to underside of slab
+    const tableHeight   = legHeight + topThickness; // ~0.42m, realistic low coffee-table height
+
+    const extrudeSettings = {
+      depth: topThickness,
+      bevelEnabled: true,
+      bevelThickness: 0.014,
+      bevelSize: 0.014,
+      bevelSegments: 8,
+      curveSegments: 64
+    };
+    const topGeo = new THREE.ExtrudeGeometry(topShape, extrudeSettings);
+    topGeo.rotateX(-Math.PI/2);
+    topGeo.translate(0, legHeight, 0);
+
+    const lacquerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xf2ede1, roughness: 0.16, metalness: 0.02,
+      clearcoat: 0.95, clearcoatRoughness: 0.06, envMapIntensity: 1.05,
+      emissive: 0xbfe3ff, emissiveIntensity: 0.16
+    });
+    tableLacquerMat = lacquerMat;
+    // Cool (night) / warm (sunlit) emissive tints for the tabletop, lerped
+    // by sunFactor each frame in the render loop.
+    tableCoolEmissive = new THREE.Color(0xbfe3ff);
+    tableWarmEmissive = new THREE.Color(0xffddaa);
+
+    const tableGroup = new THREE.Group();
+
+    const top = new THREE.Mesh(topGeo, lacquerMat);
+    top.castShadow = true;
+    top.receiveShadow = true;
+    tableGroup.add(top);
+
+    // Three cylindrical legs — same glossy cream finish, slightly less
+    // clearcoat so they don't read as mirrors under low grazing light.
+    const legMat = new THREE.MeshPhysicalMaterial({
+      color: 0xefe9dc, roughness: 0.22, metalness: 0.02,
+      clearcoat: 0.6, clearcoatRoughness: 0.12,
+      emissive: 0xbfe3ff, emissiveIntensity: 0.08
+    });
+    tableLegMat = legMat;
+    const legRadius = 0.085;
+    const legGeo = new THREE.CylinderGeometry(legRadius, legRadius, legHeight, 28);
+    const legPositions = [
+      [ 0.42,  0.05],   // lone leg, under the right-hand lobe
+      [-0.30, -0.08],   // clustered pair, left side
+      [-0.14,  0.14]
+    ];
+    legPositions.forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(legGeo, legMat);
+      leg.position.set(lx, legHeight/2, lz);
+      leg.castShadow = true;
+      leg.receiveShadow = true;
+      tableGroup.add(leg);
+    });
+
+    // Center the whole table on the rug, matching the previous piece's
+    // centering approach (rug spans x:[-rugWidth/2, rugWidth/2], z:[rugStartZ, rugEndZ]).
+    const bbox = new THREE.Box3().setFromObject(tableGroup);
+    const centerX = (bbox.min.x + bbox.max.x) / 2;
+    const centerZ = (bbox.min.z + bbox.max.z) / 2;
+    tableGroup.position.set(0 - centerX, 0, rugCenterZGlobal - centerZ - 0.25);
+
+    room.add(tableGroup);
+    tableGroupRef = tableGroup;
+
+    // ---------- Holographic "ENTER" emitter ----------
+    // A small projector-like point set into the tabletop, standing in for
+    // the source of the hologram: a soft blue-white point light that spills
+    // gentle light across the lacquered top and nearby cards/props, a thin
+    // glowing disc marking the emission lens, and a faint upward cone of
+    // light suggesting the beam that the floating "ENTER" label (an HTML
+    // overlay tracked via enterButtonAnchor, positioned ~8-10in above) is
+    // being projected from.
+    const hologramOrigin = new THREE.Vector3(0, tableHeight + 0.003, rugCenterZGlobal - 0.25);
+
+    const hologramLight = new THREE.PointLight(0xbfe3ff, 1.15, 1.7, 2);
+    hologramLight.position.set(hologramOrigin.x, hologramOrigin.y + 0.06, hologramOrigin.z);
+    room.add(hologramLight);
+    hologramPointLight = hologramLight;
+
+    const emitterDiscGeo = new THREE.CircleGeometry(0.055, 32);
+    const emitterDiscMat = new THREE.MeshBasicMaterial({
+      color: 0xdcf1ff, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const emitterDisc = new THREE.Mesh(emitterDiscGeo, emitterDiscMat);
+    emitterDisc.rotation.x = -Math.PI / 2;
+    emitterDisc.position.copy(hologramOrigin);
+    room.add(emitterDisc);
+    hologramEmitterMat = emitterDiscMat;
+
+    const beamGeo = new THREE.CylinderGeometry(0.004, 0.085, 0.24, 24, 1, true);
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xaee0ff, transparent: true, opacity: 0.09,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.set(hologramOrigin.x, hologramOrigin.y + 0.12, hologramOrigin.z);
+    room.add(beam);
+    hologramBeamMat = beamMat;
+
+    // Pin the Enter button's world anchor directly above the hologram
+    // emitter at the table's center, hovering roughly 16-18 inches (~0.45m)
+    // above the tabletop (raised from the original ~0.22m).
+    enterButtonAnchor.set(hologramOrigin.x, tableHeight + 0.45, hologramOrigin.z);
+
+    // ---------- Ambient glow around the whole table ----------
+    // Beyond the small hologram emitter, the table itself should read as
+    // gently glowing. Two enlarged, additive-blended copies of the tabletop
+    // silhouette sit just beneath the slab's underside, bleeding soft
+    // blue-white light outward with a falloff (tight inner halo + wider,
+    // fainter outer halo), plus a broad low-intensity point light tucked
+    // under the top to wash the legs and nearby rug/floor in the same glow.
+    const haloShape = new THREE.Shape(smoothPts.map(p => new THREE.Vector2(p.x * 1.16, p.y * 1.16)));
+    const haloGeo = new THREE.ShapeGeometry(haloShape, 96);
+    haloGeo.rotateX(-Math.PI / 2);
+    haloGeo.translate(0, legHeight - 0.008, 0);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0xbfe3ff, transparent: true, opacity: 0.16,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    tableGroup.add(halo);
+    tableHaloMat = haloMat;
+
+    const haloShape2 = new THREE.Shape(smoothPts.map(p => new THREE.Vector2(p.x * 1.42, p.y * 1.42)));
+    const haloGeo2 = new THREE.ShapeGeometry(haloShape2, 96);
+    haloGeo2.rotateX(-Math.PI / 2);
+    haloGeo2.translate(0, legHeight - 0.014, 0);
+    const haloMat2 = new THREE.MeshBasicMaterial({
+      color: 0xbfe3ff, transparent: true, opacity: 0.065,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const halo2 = new THREE.Mesh(haloGeo2, haloMat2);
+    tableGroup.add(halo2);
+    tableHaloMat2 = haloMat2;
+
+    // Thin edge-rim glow tracing the tabletop's own perimeter, sitting right
+    // at the slab's edge so the outline of the table itself looks lit. Built
+    // from the same dense sample points as the tabletop shape, remapped into
+    // the slab's actual world orientation (the extrude geometry was rotated
+    // -90° about X, which sends shape-space (x,y) to world-space (x,0,-y)).
+    const rimPts3D = smoothPts.map(p => new THREE.Vector3(p.x, legHeight + topThickness * 0.55, -p.y));
+    const rimCurve3D = new THREE.CatmullRomCurve3(rimPts3D, true, 'catmullrom', 0.0);
+    const rimGeo = new THREE.TubeGeometry(rimCurve3D, 220, 0.016, 10, true);
+    const rimMat = new THREE.MeshBasicMaterial({
+      color: 0xdcf1ff, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const rimGlow = new THREE.Mesh(rimGeo, rimMat);
+    tableGroup.add(rimGlow);
+    tableRimMat = rimMat;
+
+    const underGlowLight = new THREE.PointLight(0xbfe3ff, 0.55, 1.4, 2);
+    underGlowLight.position.set(hologramOrigin.x, legHeight - 0.05, hologramOrigin.z);
+    tableGroup.add(underGlowLight);
+    tableUnderGlowLight = underGlowLight;
+
+    // ---------- Cards on the coffee table ----------
+    // Instead of a bare tabletop: one deck still sealed in its box, a second
+    // deck fanned open, a few loose cards scattered naturally, and one card
+    // flipped face-up showing its illustration. All built as thin textured
+    // boxes so each card shows a distinct face/back and casts a real shadow.
+    {
+      const texLoader = new THREE.TextureLoader();
+      function loadCardTex(dataUri){
+        const t = texLoader.load(dataUri);
+        t.encoding = THREE.sRGBEncoding;
+        t.anisotropy = 4;
+        return t;
+      }
+      const cardTex = {
+        yellowBack: loadCardTex(CARD_IMG.yellow),
+        greenBack:  loadCardTex(CARD_IMG.green),
+        blueBack:   loadCardTex(CARD_IMG.blue),
+        redBack:    loadCardTex(CARD_IMG.red),
+        blackBack:  loadCardTex(CARD_IMG.black),
+        redFace:    loadCardTex(CARD_IMG.redFace)
+      };
+
+      const cardW = 0.063, cardD = 0.088, cardT = 0.0018;
+      // Use the table's own bounding box for the true top-surface height
+      // (rather than assuming it) and lift by half a card's thickness so
+      // cards rest ON the glossy top instead of being centered through it.
+      const surfaceY = bbox.max.y + cardT/2 + 0.0004;
+      const cardEdgeMat = new THREE.MeshStandardMaterial({ color: 0xe8e2d3, roughness: 0.65 });
+
+      // A single card: textured top (whatever currently faces up) and a
+      // (usually unseen) textured underside, thin painted edges all round.
+      function makeCard(topTex, bottomTex){
+        const topMat = new THREE.MeshStandardMaterial({ map: topTex, roughness: 0.34, metalness: 0.02 });
+        const bottomMat = new THREE.MeshStandardMaterial({ map: bottomTex || topTex, roughness: 0.34, metalness: 0.02 });
+        const mats = [cardEdgeMat, cardEdgeMat, topMat, bottomMat, cardEdgeMat, cardEdgeMat];
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(cardW, cardT, cardD), mats);
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        return mesh;
+      }
+
+      // -- 1. A full deck, still sealed in its branded box, lid up --
+      function boxTexture(baseHex, accentHex){
+        const res = 256;
+        const c = document.createElement('canvas');
+        c.width = res; c.height = Math.round(res*1.4);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = baseHex;
+        ctx.fillRect(0,0,c.width,c.height);
+        ctx.strokeStyle = accentHex;
+        ctx.lineWidth = 6;
+        ctx.strokeRect(12,12,c.width-24,c.height-24);
+        ctx.fillStyle = accentHex;
+        ctx.font = '700 30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('W', c.width/2, c.height/2 + 11);
+        const tex = new THREE.CanvasTexture(c);
+        tex.encoding = THREE.sRGBEncoding;
+        return tex;
+      }
+      function addBoxedDeck(x, z, rotY){
+        const g = new THREE.Group();
+        const w = cardW + 0.003, d = cardD + 0.004, h = 0.023;
+        const boxMat = new THREE.MeshStandardMaterial({ color: 0x151310, roughness: 0.38, metalness: 0.06 });
+        const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat);
+        box.position.y = h/2;
+        box.castShadow = false; box.receiveShadow = false;
+        g.add(box);
+        const lid = new THREE.Mesh(
+          new THREE.PlaneGeometry(w*0.94, d*0.94),
+          new THREE.MeshStandardMaterial({ map: boxTexture('#151310', '#c9a227'), roughness: 0.4, metalness: 0.06 })
+        );
+        lid.rotation.x = -Math.PI/2;
+        lid.position.y = h + 0.0006;
+        g.add(lid);
+        g.position.set(x, surfaceY, z);
+        g.rotation.y = rotY || 0;
+        tableGroup.add(g);
+      }
+      addBoxedDeck(-0.40, 0.16, 0.28);
+
+      const backColors = [cardTex.yellowBack, cardTex.greenBack, cardTex.blueBack, cardTex.redBack, cardTex.blackBack];
+      let colorCycle = 0;
+      function nextBack(){ const t = backColors[colorCycle % backColors.length]; colorCycle++; return t; }
+
+      // -- 2. A big deck fanned wide open, kept to the left half of the table --
+      const fanCount = 11;
+      const fanOriginX = -0.28, fanOriginZ = -0.02;
+      for(let i=0;i<fanCount;i++){
+        const t = i/(fanCount-1) - 0.5;        // -0.5 .. 0.5
+        const ang = t * 1.55;                   // wide spread angle
+        const card = makeCard(backColors[i % backColors.length], cardTex.blackBack);
+        card.position.set(
+          fanOriginX + Math.sin(ang)*0.22 + i*0.004,
+          surfaceY + i*0.0009,
+          fanOriginZ + (1 - Math.cos(ang))*0.14 - i*0.003
+        );
+        card.rotation.y = ang;
+        tableGroup.add(card);
+        looseTableCards.push({ mesh: card, basePos: card.position.clone(), baseRotY: card.rotation.y });
+      }
+
+      // -- 3. A second, smaller fan tucked toward the back-left lobe, so the
+      // spread reads as two decks in play, not one --
+      const fan2Count = 6;
+      const fan2OriginX = -0.52, fan2OriginZ = 0.10;
+      for(let i=0;i<fan2Count;i++){
+        const t = i/(fan2Count-1) - 0.5;
+        const ang = t * 1.1 + 2.5;              // rotated to face a different direction
+        const card = makeCard(nextBack(), cardTex.blackBack);
+        card.position.set(
+          fan2OriginX + Math.sin(ang)*0.14,
+          surfaceY + i*0.0009,
+          fan2OriginZ + Math.cos(ang)*0.14
+        );
+        card.rotation.y = ang + Math.PI/2;
+        tableGroup.add(card);
+        looseTableCards.push({ mesh: card, basePos: card.position.clone(), baseRotY: card.rotation.y });
+      }
+
+      // -- 4. Small loose stacks of a few cards each, tucked into corners --
+      function addStack(x, z, count, rotBase){
+        for(let i=0;i<count;i++){
+          const card = makeCard(nextBack(), cardTex.blackBack);
+          const jitter = (i===count-1) ? 0 : (Math.random()-0.5)*0.05;
+          card.position.set(x + jitter*0.4, surfaceY + i*0.0021, z + jitter*0.3);
+          card.rotation.y = rotBase + (Math.random()-0.5)*0.25;
+          tableGroup.add(card);
+          looseTableCards.push({ mesh: card, basePos: card.position.clone(), baseRotY: card.rotation.y });
+        }
+      }
+      addStack(-0.20, -0.20, 4, 0.75);
+      addStack(-0.58,  0.24, 3, -0.5);
+      addStack(-0.06,  0.26, 3, 1.3);
+
+      // -- 5. A dense "carpet" of loose cards covering most of the tabletop,
+      // randomly scattered and rotated within the table's rough footprint so
+      // there's a real pile-up rather than a handful of isolated cards --
+      const carpetCenterX = -0.32, carpetCenterZ = 0.02;
+      const carpetRadiusX = 0.30, carpetRadiusZ = 0.27;
+      const carpetCount = 34;
+      for(let i=0;i<carpetCount;i++){
+        // sample within an ellipse (rejection-free via polar sampling) so
+        // cards stay on the tabletop instead of hanging off the edge
+        const rr = Math.sqrt(Math.random());
+        const theta = Math.random()*Math.PI*2;
+        const x = carpetCenterX + Math.cos(theta)*rr*carpetRadiusX;
+        const z = carpetCenterZ + Math.sin(theta)*rr*carpetRadiusZ;
+        const card = makeCard(nextBack(), cardTex.blackBack);
+        card.position.set(x, surfaceY + 0.00015 + i*0.00005, z);
+        card.rotation.y = Math.random()*Math.PI*2;
+        tableGroup.add(card);
+        looseTableCards.push({ mesh: card, basePos: card.position.clone(), baseRotY: card.rotation.y });
+      }
+
+      // -- 6. A handful of prominent loose cards placed deliberately on top
+      // of the carpet, cycling through every back color --
+      const scattered = [
+        { x: -0.06, z:  0.26, rot:  0.62 },
+        { x: -0.20, z:  0.30, rot: -0.35 },
+        { x: -0.52, z: -0.14, rot:  1.10 },
+        { x: -0.32, z:  0.22, rot: -0.80 },
+        { x: -0.10, z:  0.14, rot:  0.95 },
+        { x: -0.10, z: -0.24, rot: -1.15 },
+        { x: -0.34, z: -0.08, rot:  0.40 },
+        { x: -0.48, z:  0.10, rot: -0.20 },
+        { x: -0.60, z: -0.02, rot: -0.65 },
+        { x: -0.02, z: -0.14, rot:  1.55 }
+      ];
+      scattered.forEach((s, i) => {
+        const card = makeCard(nextBack(), cardTex.blackBack);
+        card.position.set(s.x, surfaceY + 0.0032 + i*0.00006, s.z);
+        card.rotation.y = s.rot;
+        tableGroup.add(card);
+        looseTableCards.push({ mesh: card, basePos: card.position.clone(), baseRotY: card.rotation.y });
+      });
+
+      // -- 7. Several cards flipped face-up, showing the illustration inside,
+      // scattered through the pile rather than a single lonely card --
+      const faceUps = [
+        { x: -0.16, z:  0.08, rot: -0.42 },
+        { x: -0.18, z: -0.06, rot:  0.85 },
+        { x: -0.44, z:  0.30, rot: -1.10 },
+        { x: -0.40, z: -0.22, rot:  0.30 },
+        { x: -0.26, z:  0.20, rot: -1.55 }
+      ];
+      faceUps.forEach((f, i) => {
+        const faceCard = makeCard(cardTex.redFace, cardTex.redBack);
+        faceCard.position.set(f.x, surfaceY + 0.0038 + i*0.00006, f.z);
+        faceCard.rotation.y = f.rot;
+        tableGroup.add(faceCard);
+        looseTableCards.push({ mesh: faceCard, basePos: faceCard.position.clone(), baseRotY: faceCard.rotation.y });
+      });
+
+      // ---------- Sun-driven detail: a warm patch of light landing on the
+      // table, and a handful of loose cards catching a glint ----------
+      // Both sit at zero opacity by default (night) and are eased in by
+      // sunFactor each frame, in step with the sunbeams crossing the floor.
+      function sunPatchTexture(){
+        const c = document.createElement('canvas'); c.width = c.height = 256;
+        const ctx = c.getContext('2d');
+        const g = ctx.createRadialGradient(128,128,0,128,128,128);
+        g.addColorStop(0.00, 'rgba(255,244,214,0.85)');
+        g.addColorStop(0.55, 'rgba(255,230,175,0.32)');
+        g.addColorStop(1.00, 'rgba(255,230,175,0)');
+        ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
+        return new THREE.CanvasTexture(c);
+      }
+      tableSunPatchMat = new THREE.MeshBasicMaterial({
+        map: sunPatchTexture(), transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, opacity: 0
+      });
+      const tableSunPatch = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.5), tableSunPatchMat);
+      tableSunPatch.rotation.x = -Math.PI/2;
+      // Biased toward the same corner the window/sun sits on, so the patch
+      // reads as light actually falling in from that direction.
+      tableSunPatch.position.set(-0.16, surfaceY + 0.0012, 0.05);
+      tableGroup.add(tableSunPatch);
+
+      function glintTexture(){
+        const c = document.createElement('canvas'); c.width = c.height = 64;
+        const ctx = c.getContext('2d');
+        const g = ctx.createRadialGradient(32,32,0,32,32,32);
+        g.addColorStop(0.00, 'rgba(255,255,246,1)');
+        g.addColorStop(0.35, 'rgba(255,244,210,0.6)');
+        g.addColorStop(1.00, 'rgba(255,244,210,0)');
+        ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+        return new THREE.CanvasTexture(c);
+      }
+      const glintTex = glintTexture();
+      // A spread of cards already scattered across the table (every few
+      // entries, not all of them) each get a tiny additive glint sitting
+      // just above their face, so a handful visibly catch the light rather
+      // than the whole pile sparkling uniformly.
+      for(let i = 0; i < looseTableCards.length; i += 5){
+        const entry = looseTableCards[i];
+        const glintMat = new THREE.MeshBasicMaterial({
+          map: glintTex, transparent: true, blending: THREE.AdditiveBlending,
+          depthWrite: false, opacity: 0
+        });
+        const glint = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.02), glintMat);
+        glint.rotation.x = -Math.PI/2;
+        glint.position.set(entry.basePos.x, entry.basePos.y + 0.0012, entry.basePos.z);
+        tableGroup.add(glint);
+        cardGlints.push({ mat: glintMat, phase: Math.random()*Math.PI*2, speed: 1.5 + Math.random()*2.2 });
+      }
+    }
+
+    // ---------- Everyday clutter: soda can, pizza slice, stack of books ----------
+    // Loaded from embedded .glb files so the table reads as lived-in, not
+    // just a card table. Each model is measured after load (its own real
+    // bounding box) and scaled/lifted so it sits flush on the tabletop
+    // instead of floating or sinking through it — same fix as the cards.
+    {
+      const gltfLoader = new THREE.GLTFLoader();
+      const propSurfaceY = bbox.max.y;
+
+      function placeGlbProp(dataUri, targetDim, axis, x, z, rotY, onReady){
+        gltfLoader.load(dataUri, (gltf) => {
+          const model = gltf.scene;
+          model.traverse((child) => {
+            if(child.isMesh){ child.castShadow = true; child.receiveShadow = true; }
+          });
+          // Freshly-parsed objects haven't had their matrixWorld updated by
+          // a render pass yet, so force it before measuring — otherwise the
+          // bounding box (and everything placed from it) reads stale and
+          // props end up floating above or sunk into the table.
+          model.updateMatrixWorld(true);
+
+          // Measure, then scale so the chosen axis matches a real-world size.
+          const box1 = new THREE.Box3().setFromObject(model);
+          const size1 = new THREE.Vector3(); box1.getSize(size1);
+          const dim = axis === 'max' ? Math.max(size1.x, size1.y, size1.z) : size1[axis];
+          const scale = targetDim / Math.max(dim, 1e-6);
+          model.scale.setScalar(scale);
+          model.updateMatrixWorld(true);
+
+          // Re-measure after scaling, then re-center the model inside a
+          // holder group so the holder's origin sits exactly at the
+          // model's horizontal center and vertical bottom — that way
+          // holder.position can be set directly to a tabletop coordinate
+          // and holder.rotation.y can spin the model in place cleanly.
+          const box2 = new THREE.Box3().setFromObject(model);
+          const center2 = new THREE.Vector3(); box2.getCenter(center2);
+          model.position.set(-center2.x, -box2.min.y, -center2.z);
+          model.updateMatrixWorld(true);
+
+          const holder = new THREE.Group();
+          holder.add(model);
+          holder.position.set(x, propSurfaceY, z);
+          holder.rotation.y = rotY || 0;
+          tableGroup.add(holder);
+          if(typeof onReady === 'function') onReady(holder, propSurfaceY);
+        });
+      }
+
+      // Soda can and pizza slice on the right-hand side of the table, so
+      // the cards (left side) and the snack clutter (right side) read as
+      // two clear, deliberate zones rather than everything scattered evenly.
+      placeGlbProp(GLB_MODEL.sodaCan, 0.122, 'y', 0.48, -0.14, 0.4);
+      placeGlbProp(GLB_MODEL.pizzaSlice, 0.20, 'max', 0.24, 0.06, 0.9);
+
+      // A remote, filling out the rest of the right side so it doesn't
+      // read as two lonely items. Captured via onReady so the render loop
+      // can lift it off the table and "use" it on page load.
+      placeGlbProp(GLB_MODEL.remote, 0.18, 'max', 0.36, 0.24, 0.5, (holder, surfaceY)=>{
+        remoteHolder = holder;
+        remoteRestY = surfaceY;
+        remoteRestPos.set(holder.position.x, holder.position.y, holder.position.z);
+        remoteRestRotY = holder.rotation.y;
+        // Rise to roughly half the room's height above the floor — a real,
+        // dramatic lift rather than a token hover off the tabletop.
+        REMOTE_LIFT_HEIGHT = Math.max(0.35, H * 0.5 - surfaceY);
+      });
+    }
+
+
+    const footprintX = bbox.max.x - bbox.min.x;
+    const footprintZ = bbox.max.z - bbox.min.z;
+    addContactShadow(room, tableGroup.position.x, tableGroup.position.z, footprintX*0.52, footprintZ*0.52, 0.30);
+  }
+
+  // ---------- Chesterfield sofa: premium woven fabric, rolled arms ----------
+  // Placed behind the coffee table (further from the TV wall than the
+  // table), rotated to face the wall-mounted TV across the coffee table.
+  {
+    // -- Shared woven-fabric grain: a fine plain-weave crosshatch (alternating
+    // light/dark "thread" bands running both directions) plus scattered
+    // heather flecks, so every surface reads as spun fiber rather than a
+    // flat painted color. Drawn straight onto whatever color+bump canvases
+    // are passed in, seeded so different panels/cushions don't repeat
+    // identically. --
+    function drawWeaveGrain(cctx, bctx, w, h, seed){
+      const rnd = makeSeededRng((seed || 1) * 7919 + 104729);
+      const thread = 4.5; // px pitch of the weave — fine enough to read as fabric, not tiles
+
+      for (let y = 0; y < h; y += thread) {
+        const dark = (Math.floor(y / thread) % 2 === 0);
+        const a = 0.045 + rnd() * 0.03;
+        cctx.fillStyle = dark ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a * 0.9})`;
+        cctx.fillRect(0, y, w, thread * 0.6);
+        const ba = 0.22 + rnd() * 0.14;
+        bctx.fillStyle = dark ? `rgba(0,0,0,${ba})` : `rgba(255,255,255,${ba})`;
+        bctx.fillRect(0, y, w, thread * 0.6);
+      }
+      for (let x = 0; x < w; x += thread) {
+        const dark = (Math.floor(x / thread) % 2 === 0);
+        const a = 0.03 + rnd() * 0.02;
+        cctx.fillStyle = dark ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a * 0.9})`;
+        cctx.fillRect(x, 0, thread * 0.6, h);
+        const ba = 0.14 + rnd() * 0.1;
+        bctx.fillStyle = dark ? `rgba(0,0,0,${ba})` : `rgba(255,255,255,${ba})`;
+        bctx.fillRect(x, 0, thread * 0.6, h);
+      }
+      // heather flecks — tiny flecks of lighter/darker fiber for a
+      // premium melange yarn look, not a flat dyed sheet
+      const fleckCount = Math.floor((w * h) / 850);
+      for (let i = 0; i < fleckCount; i++) {
+        const fx = rnd() * w, fy = rnd() * h;
+        const light = rnd() > 0.5;
+        cctx.fillStyle = light ? `rgba(255,255,255,${0.03 + rnd() * 0.05})` : `rgba(0,0,0,${0.03 + rnd() * 0.05})`;
+        cctx.fillRect(fx, fy, 1.3, 1.3);
+      }
+    }
+
+    // -- Procedural woven-fabric textures for the large flat panels (seat
+    // plinth, backrest box, rolled arms): a tight plain-weave color map
+    // paired with a matching bump map so the thread grain actually catches
+    // light instead of reading as flat dyed upholstery. --
+    function wovenFabricTextures(cols, rows, hexColor){
+      const cellPx = 96;
+      const w = Math.max(2, cols) * cellPx, h = Math.max(2, rows) * cellPx;
+      const cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+      const cctx = cc.getContext('2d');
+      cctx.fillStyle = hexColor; cctx.fillRect(0, 0, w, h);
+      const bc = document.createElement('canvas'); bc.width = w; bc.height = h;
+      const bctx = bc.getContext('2d');
+      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, w, h);
+
+      drawWeaveGrain(cctx, bctx, w, h, cols * 3 + rows);
+
+      const colorTex = new THREE.CanvasTexture(cc);
+      colorTex.encoding = THREE.sRGBEncoding;
+      const bumpTex = new THREE.CanvasTexture(bc);
+      return { colorTex, bumpTex };
+    }
+
+    // -- Cushion surface textures: builds on the woven-fabric grain above,
+    // adding randomized fold/wrinkle streaks (so no two cushions read as
+    // identical), an optional soft radial "sat-in" compression shadow, and
+    // a dashed top-stitch line inset from the edge. --
+    function cushionTextures(cols, rows, hexColor, opts){
+      opts = opts || {};
+      const cellPx = 96;
+      const w = Math.max(2, cols) * cellPx, h = Math.max(2, rows) * cellPx;
+      const cc = document.createElement('canvas'); cc.width = w; cc.height = h;
+      const cctx = cc.getContext('2d');
+      cctx.fillStyle = hexColor; cctx.fillRect(0, 0, w, h);
+      const bc = document.createElement('canvas'); bc.width = w; bc.height = h;
+      const bctx = bc.getContext('2d');
+      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, w, h);
+
+      drawWeaveGrain(cctx, bctx, w, h, (opts.seed || 1) * 5 + cols);
+
+      // -- subtle fabric wrinkles: a handful of soft curved fold lines, --
+      // -- seeded per-cushion so none of them look identical/copy-pasted --
+      const rnd = makeSeededRng((opts.seed || 1) * 9301 + 49297);
+      const wrinkleCount = opts.wrinkles != null ? opts.wrinkles : 5;
+      for (let i = 0; i < wrinkleCount; i++) {
+        const sx = rnd() * w, sy = rnd() * h * 0.4 + h * 0.3;
+        const len = w * (0.16 + rnd() * 0.22), ang = (rnd() - 0.5) * 0.8;
+        const ex = sx + Math.cos(ang) * len, ey = sy + Math.sin(ang) * len * 0.4;
+        const midx = (sx + ex) / 2, midy = (sy + ey) / 2 - len * 0.07;
+        [cctx, bctx].forEach((ctx, isBump) => {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.quadraticCurveTo(midx, midy, ex, ey);
+          ctx.lineWidth = isBump ? 5 + rnd() * 4 : 3 + rnd() * 3;
+          ctx.strokeStyle = isBump ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.15)';
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(sx, sy + 3);
+          ctx.quadraticCurveTo(midx, midy + 3, ex, ey + 3);
+          ctx.lineWidth = isBump ? 3 + rnd() * 3 : 2;
+          ctx.strokeStyle = isBump ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.08)';
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+
+      // -- compression: soft radial darkening where weight presses the --
+      // -- cushion down, biased off-center so it reads as "sat in" --
+      if (opts.compress) {
+        const dcx = w * (opts.compressX != null ? opts.compressX : 0.5);
+        const dcy = h * (opts.compressY != null ? opts.compressY : 0.5);
+        const dr = Math.min(w, h) * (opts.compressR || 0.42);
+        const dip = cctx.createRadialGradient(dcx, dcy, 0, dcx, dcy, dr);
+        dip.addColorStop(0, 'rgba(0,0,0,0.16)');
+        dip.addColorStop(0.6, 'rgba(0,0,0,0.06)');
+        dip.addColorStop(1, 'rgba(0,0,0,0)');
+        cctx.fillStyle = dip; cctx.fillRect(0, 0, w, h);
+        const bdip = bctx.createRadialGradient(dcx, dcy, 0, dcx, dcy, dr);
+        bdip.addColorStop(0, 'rgba(0,0,0,0.55)');
+        bdip.addColorStop(0.7, 'rgba(128,128,128,0.1)');
+        bdip.addColorStop(1, 'rgba(128,128,128,0)');
+        bctx.fillStyle = bdip; bctx.fillRect(0, 0, w, h);
+      }
+
+      // -- stitched border: a real double-row saddle stitch reading as two
+      // parallel rows of thread punched through the fabric, rather than a
+      // single painted dash — the outer row slightly offset in phase so
+      // the stitches don't line up like a printed pattern --
+      if (opts.stitchInset != null) {
+        const inset = opts.stitchInset;
+        const gap = 5;
+        const threadColor = opts.stitchColor || 'rgba(0,0,0,0.4)';
+        [0, gap].forEach((d, i) => {
+          cctx.save();
+          cctx.setLineDash([5, 4]);
+          cctx.lineDashOffset = i * 4.5;
+          cctx.lineWidth = 1.4;
+          cctx.strokeStyle = threadColor;
+          cctx.strokeRect(inset + d, inset + d, w - (inset + d) * 2, h - (inset + d) * 2);
+          cctx.restore();
+          bctx.save();
+          bctx.setLineDash([5, 4]);
+          bctx.lineDashOffset = i * 4.5;
+          bctx.lineWidth = 2.2;
+          bctx.strokeStyle = 'rgba(0,0,0,0.55)';
+          bctx.strokeRect(inset + d, inset + d, w - (inset + d) * 2, h - (inset + d) * 2);
+          bctx.restore();
+        });
+      }
+
+      const colorTex = new THREE.CanvasTexture(cc);
+      colorTex.encoding = THREE.sRGBEncoding;
+      colorTex.wrapS = colorTex.wrapT = THREE.RepeatWrapping;
+      const bumpTex = new THREE.CanvasTexture(bc);
+      bumpTex.wrapS = bumpTex.wrapT = THREE.RepeatWrapping;
+      return { colorTex, bumpTex };
+    }
+
+    // -- Rounded-rectangle shape, reused both for soft cushion volumes and
+    // for the piping loops that trace their rims --
+    function roundedRectShape(w, d, r){
+      const shape = new THREE.Shape();
+      const hw = w / 2, hd = d / 2;
+      shape.moveTo(-hw + r, -hd);
+      shape.lineTo(hw - r, -hd);
+      shape.quadraticCurveTo(hw, -hd, hw, -hd + r);
+      shape.lineTo(hw, hd - r);
+      shape.quadraticCurveTo(hw, hd, hw - r, hd);
+      shape.lineTo(-hw + r, hd);
+      shape.quadraticCurveTo(-hw, hd, -hw, hd - r);
+      shape.lineTo(-hw, -hd + r);
+      shape.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+      return shape;
+    }
+
+    // -- Soft cushion volume: a rounded, beveled pillow (extrude + bevel)
+    // instead of a hard-edged box, so light wraps softly around every edge --
+    // -- Custom UV generator for the cushion extrude: three.js's default
+    // generator writes raw local coordinates (in meters) as UVs instead of
+    // a normalized 0–1 range. With our canvas textures that meant most of
+    // the rounded side wall and bevel sampled outside [0,1] and clamped to
+    // a single edge pixel — reading as a flat, smooth band around an
+    // otherwise woven cushion. This normalizes both the flat top/bottom
+    // faces and the side/bevel wall to the cushion's own width/depth/height
+    // so the weave, wrinkles, and stitching actually reach every face. --
+    function cushionUVGenerator(w, d, totalH){
+      const hw = w / 2, hd = d / 2;
+      return {
+        generateTopUV: function(geometry, vertices, indexA, indexB, indexC){
+          return [indexA, indexB, indexC].map(i => {
+            const x = vertices[i * 3], y = vertices[i * 3 + 1];
+            return new THREE.Vector2((x + hw) / w, (y + hd) / d);
+          });
+        },
+        generateSideWallUV: function(geometry, vertices, indexA, indexB, indexC, indexD){
+          return [indexA, indexB, indexC, indexD].map(i => {
+            const x = vertices[i * 3], y = vertices[i * 3 + 1], z = vertices[i * 3 + 2];
+            const along = Math.abs(x) > Math.abs(y) ? (x + hw) / w : (y + hd) / d;
+            return new THREE.Vector2(along, z / totalH);
+          });
+        }
+      };
+    }
+
+    function makeSoftCushionGeometry(w, d, h, cornerR, bevelSize){
+      const bevelThickness = Math.min(bevelSize, h * 0.45);
+      const depth = Math.max(0.004, h - bevelThickness * 2);
+      const shape = roundedRectShape(w, d, cornerR);
+      const geo = new THREE.ExtrudeGeometry(shape, {
+        depth: depth, bevelEnabled: true, bevelThickness: bevelThickness,
+        bevelSize: bevelSize, bevelSegments: 5, curveSegments: 8,
+        uvGenerator: cushionUVGenerator(w, d, depth + bevelThickness * 2)
+      });
+      geo.rotateX(-Math.PI / 2);
+      geo.computeBoundingBox();
+      geo.translate(0, -geo.boundingBox.min.y, 0);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    // -- Small tileable weave map for thin trim geometry (piping cord, arm
+    // seam ring) where a single full-surface canvas would stretch across a
+    // tiny UV footprint and read as smooth/plain — this repeats instead. --
+    function tileableWeaveTexture(hexColor, seed){
+      const size = 64;
+      const cc = document.createElement('canvas'); cc.width = size; cc.height = size;
+      const cctx = cc.getContext('2d');
+      cctx.fillStyle = hexColor; cctx.fillRect(0, 0, size, size);
+      const bc = document.createElement('canvas'); bc.width = size; bc.height = size;
+      const bctx = bc.getContext('2d');
+      bctx.fillStyle = '#808080'; bctx.fillRect(0, 0, size, size);
+      drawWeaveGrain(cctx, bctx, size, size, seed);
+      const colorTex = new THREE.CanvasTexture(cc);
+      colorTex.encoding = THREE.sRGBEncoding;
+      colorTex.wrapS = colorTex.wrapT = THREE.RepeatWrapping;
+      const bumpTex = new THREE.CanvasTexture(bc);
+      bumpTex.wrapS = bumpTex.wrapT = THREE.RepeatWrapping;
+      return { colorTex, bumpTex };
+    }
+
+    // -- Piping loop: a thin corded seam that hugs a cushion's rounded rim --
+    function makePipingLoop(w, d, cornerR, y, color, radius){
+      const shape = roundedRectShape(Math.max(0.01, w - 0.01), Math.max(0.01, d - 0.01), Math.max(0.001, cornerR - 0.005));
+      const pts2d = shape.getPoints(24);
+      const pts3d = pts2d.map(p => new THREE.Vector3(p.x, y, -p.y));
+      const curve = new THREE.CatmullRomCurve3(pts3d, true, 'catmullrom', 0.12);
+      const { colorTex: pipeColorTex, bumpTex: pipeBumpTex } = tileableWeaveTexture(color, (w + d) * 37);
+      pipeColorTex.repeat.set(Math.max(20, Math.round((w + d) * 46)), 2);
+      pipeBumpTex.repeat.set(Math.max(20, Math.round((w + d) * 46)), 2);
+      const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 64, radius, 8, true),
+        new THREE.MeshPhysicalMaterial({
+          map: pipeColorTex, bumpMap: pipeBumpTex, bumpScale: 0.4,
+          color: 0xffffff, roughness: 0.85, metalness: 0.0,
+          clearcoat: 0.04, clearcoatRoughness: 0.75
+        })
+      );
+      tube.castShadow = true;
+      return tube;
+    }
+
+    const RED = '#9c1016';
+    const THREAD = '#c9a98f'; // warm tone-on-tone topstitch thread, common on premium woven fabric
+
+    // Large flat panels (plinth, backrest box, rolled arms) get their own
+    // tightly-woven texture map so the fiber grain is visible even where
+    // there's no cushion-specific wrinkling/compression.
+    const { colorTex: panelColorTex, bumpTex: panelBumpTex } = wovenFabricTextures(9, 5, RED);
+    const fabricMat = new THREE.MeshPhysicalMaterial({
+      map: panelColorTex, bumpMap: panelBumpTex, bumpScale: 0.028,
+      color: 0xffffff, roughness: 0.88, metalness: 0.0,
+      clearcoat: 0.04, clearcoatRoughness: 0.75
+    });
+    const woodFootMat = new THREE.MeshStandardMaterial({ color: 0x2a1710, roughness: 0.55, metalness: 0.1 });
+
+    // -- Dimensions --
+    const sofaW    = 3.15;   // width, x-axis — stretched so the left end reaches the wall
+    const sofaD    = 0.88;   // depth, z-axis (excludes rolled-arm curl overhang)
+    const footH    = 0.09;
+    const seatH    = 0.44;   // top of seat cushion
+    const backH    = 0.86;   // top of backrest
+    const armH     = 0.66;   // top of rolled arms
+    const armR     = 0.16;
+
+    const sofaGroup = new THREE.Group();
+
+    // Seat block (plinth + cushion body)
+    const seatBlockH = seatH - footH;
+    const seatBlock = new THREE.Mesh(
+      new THREE.BoxGeometry(sofaW - armR * 1.5, seatBlockH, sofaD),
+      fabricMat
+    );
+    seatBlock.position.set(0, footH + seatBlockH / 2, 0);
+    seatBlock.castShadow = true; seatBlock.receiveShadow = true;
+    sofaGroup.add(seatBlock);
+
+    // Three soft seat cushions (rounded, piped, stitched, subtly compressed)
+    // sitting on the plinth in place of one hard flat slab — the gaps
+    // between them read as natural seam channels.
+    const pipingColor = '#5c0b0f';
+    {
+      const totalW = sofaW - armR * 1.7;
+      const cushGap = 0.022;
+      const cushD   = sofaD - 0.09;
+      const cushW   = (totalW - cushGap * 2) / 3;
+      const cushH   = 0.10;
+      const cornerR = Math.min(0.09, cushW * 0.16, cushD * 0.16);
+      const bevelSz = 0.032;
+
+      for (let i = 0; i < 3; i++) {
+        const cx = -totalW / 2 + cushW / 2 + i * (cushW + cushGap);
+        // slight per-cushion settle: center cushion compressed a touch more
+        const squash = i === 1 ? 0.93 : 0.965;
+        const geo = makeSoftCushionGeometry(cushW, cushD, cushH, cornerR, bevelSz);
+        const { colorTex, bumpTex } = cushionTextures(3, 3, RED, {
+          seed: i + 2, wrinkles: 4 + (i % 2), compress: true,
+          compressX: 0.5 + (i - 1) * 0.06, compressY: 0.56, compressR: 0.46,
+          stitchInset: 10, stitchColor: THREAD
+        });
+        const cushMat = new THREE.MeshPhysicalMaterial({
+          map: colorTex, bumpMap: bumpTex, bumpScale: 0.032,
+          color: 0xffffff, roughness: 0.84, metalness: 0.0,
+          clearcoat: 0.05, clearcoatRoughness: 0.7
+        });
+        const cushion = new THREE.Mesh(geo, cushMat);
+        cushion.scale.y = squash;
+        cushion.position.set(cx, seatH - 0.012, 0.01);
+        cushion.castShadow = true; cushion.receiveShadow = true;
+        sofaGroup.add(cushion);
+
+        const piping = makePipingLoop(cushW, cushD, cornerR, seatH - 0.012 + cushH * squash - 0.01, pipingColor, 0.006);
+        piping.position.set(cx, 0, 0.01);
+        sofaGroup.add(piping);
+      }
+    }
+
+    // Backrest (plain box body + tufted front face)
+    const backThick = 0.16;
+    const backBoxH = backH - seatH;
+    const backBox = new THREE.Mesh(
+      new THREE.BoxGeometry(sofaW - 0.04, backBoxH, backThick),
+      fabricMat
+    );
+    backBox.position.set(0, seatH + backBoxH / 2, -sofaD / 2 + backThick / 2);
+    backBox.castShadow = true; backBox.receiveShadow = true;
+    sofaGroup.add(backBox);
+
+    // Soft back cushion: a shallow rounded pillow slab mounted flush to the
+    // backrest box, instead of a flat painted-on tufted plane.
+    {
+      const backCushW = sofaW - 0.10;
+      const backCushD = backBoxH - 0.04;
+      const backCushH = 0.055;
+      const cornerR = Math.min(0.08, backCushD * 0.22);
+      const geo = makeSoftCushionGeometry(backCushW, backCushD, backCushH, cornerR, 0.024);
+      const { colorTex, bumpTex } = cushionTextures(7, 3, RED, {
+        seed: 7, wrinkles: 7, compress: true,
+        compressX: 0.5, compressY: 0.42, compressR: 0.5,
+        stitchInset: 9, stitchColor: THREAD
+      });
+      const backCushMat = new THREE.MeshPhysicalMaterial({
+        map: colorTex, bumpMap: bumpTex, bumpScale: 0.032,
+        color: 0xffffff, roughness: 0.82, metalness: 0.0,
+        clearcoat: 0.05, clearcoatRoughness: 0.7
+      });
+      const backCushion = new THREE.Mesh(geo, backCushMat);
+      // extruded slab is built lying flat (Y = its "up"); rotate so that
+      // axis points along +Z (out of the backrest) instead
+      backCushion.rotation.x = Math.PI / 2;
+      backCushion.scale.z = 0.94; // gentle overall settle
+      backCushion.scale.y = 0.90; // pressed slightly flatter against the frame
+      backCushion.position.set(0, seatH + backBoxH / 2, -sofaD / 2 + backThick + 0.003);
+      backCushion.castShadow = true; backCushion.receiveShadow = true;
+      sofaGroup.add(backCushion);
+
+      const piping = makePipingLoop(backCushW, backCushD, cornerR, backCushH * 0.94 - 0.008, pipingColor, 0.0055);
+      piping.rotation.x = Math.PI / 2;
+      piping.position.set(0, seatH + backBoxH / 2, -sofaD / 2 + backThick + 0.003);
+      sofaGroup.add(piping);
+    }
+
+    // Rolled arms (barrel + scroll-flare front cap + back-blend cap)
+    [-1, 1].forEach(side => {
+      const armX = side * (sofaW / 2 - armR);
+      const armGroup = new THREE.Group();
+      armGroup.position.set(armX, armH - armR, 0);
+      sofaGroup.add(armGroup);
+
+      const barrel = new THREE.Mesh(
+        new THREE.CylinderGeometry(armR, armR, sofaD - 0.02, 24),
+        fabricMat
+      );
+      barrel.rotation.x = Math.PI / 2;
+      barrel.castShadow = true; barrel.receiveShadow = true;
+      armGroup.add(barrel);
+
+      const frontCap = new THREE.Mesh(new THREE.SphereGeometry(armR * 1.18, 20, 16), fabricMat);
+      frontCap.position.set(0, 0, sofaD / 2 - 0.03);
+      frontCap.scale.set(1, 1, 0.85);
+      frontCap.castShadow = true;
+      armGroup.add(frontCap);
+
+      // Seam ring where the barrel meets the scroll cap — a real
+      // upholstery junction, not just two shapes silently overlapping
+      const { colorTex: seamColorTex, bumpTex: seamBumpTex } = tileableWeaveTexture(pipingColor, side * 91 + 11);
+      seamColorTex.repeat.set(24, 2);
+      seamBumpTex.repeat.set(24, 2);
+      const armSeam = new THREE.Mesh(
+        new THREE.TorusGeometry(armR * 1.01, 0.0055, 8, 24),
+        new THREE.MeshPhysicalMaterial({
+          map: seamColorTex, bumpMap: seamBumpTex, bumpScale: 0.4,
+          color: 0xffffff, roughness: 0.85, metalness: 0.0,
+          clearcoat: 0.04, clearcoatRoughness: 0.75
+        })
+      );
+      armSeam.position.set(0, 0, sofaD / 2 - 0.03 - armR * 0.12);
+      armSeam.castShadow = true;
+      armGroup.add(armSeam);
+
+      const backCap = new THREE.Mesh(new THREE.SphereGeometry(armR * 0.95, 18, 14), fabricMat);
+      backCap.position.set(0, 0, -sofaD / 2 + 0.05);
+      armGroup.add(backCap);
+    });
+
+    // Short turned bun feet at the four corners
+    const feetXZ = [
+      [-(sofaW / 2 - 0.14), -(sofaD / 2 - 0.10)],
+      [ (sofaW / 2 - 0.14), -(sofaD / 2 - 0.10)],
+      [-(sofaW / 2 - 0.14),  (sofaD / 2 - 0.10)],
+      [ (sofaW / 2 - 0.14),  (sofaD / 2 - 0.10)]
+    ];
+    feetXZ.forEach(([fx, fz]) => {
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.036, footH, 16), woodFootMat);
+      foot.position.set(fx, footH / 2, fz);
+      foot.castShadow = true;
+      sofaGroup.add(foot);
+    });
+
+    // -- Placement: pulled back in close to the camera (matching the very
+    // first layout's approach) so it just grazes the edge of the default
+    // frame — a subtle presence rather than a focal object — while sitting
+    // close and low enough that looking down (drag to pitch down) brings
+    // the seat cushions clearly into view. Shifted west so the stretched
+    // left end reaches the wall; the right end/arm stays nearest the
+    // camera's forward cone. Still facing the TV (rotation 180°).
+    const sofaScale = 1.3;
+    sofaGroup.scale.set(sofaScale, sofaScale, sofaScale);
+    sofaGroup.position.set(0, 0, 1.95);
+    sofaGroup.rotation.y = Math.PI;
+    room.add(sofaGroup);
+
+    addContactShadow(
+      room, sofaGroup.position.x, sofaGroup.position.z,
+      sofaW * 0.56 * sofaScale, sofaD * 0.62 * sofaScale, 0.34
+    );
+  }
+
+  // ---------- (Recessed shelf niches removed — west wall left blank ----------
+  // ---------- so the sofa now backed against it reads as a clean flat wall.) --
+
+  // ---------- Window (right wall) ----------
+  const winW = L * 0.82;
+  const winH = H * 0.90;
+  const winCenterY = H * 0.50;
+  const winCenterZ = -halfL * 0.08;
+
+  const windowGroup = new THREE.Group();
+  windowGroup.position.set(halfW - 0.02, winCenterY, winCenterZ);
+  windowGroup.rotation.y = -Math.PI/2;
+  room.add(windowGroup);
+
+  // Real bokeh nighttime cityscape photo used as the night view out the
+  // window, mapped with the same "cover" style fit as the daytime photo:
+  // the plane matches the window's real opening size, and the texture's
+  // repeat/offset are derived from the photo's true aspect ratio so it
+  // displays undistorted, cropped evenly top/bottom to fill the (wider)
+  // window opening.
+  const NIGHT_CITYSCAPE_PHOTO = 'images/image_012.webp';
+  function makeCoverPhotoTexture(dataUri, windowAspect, imageAspect){
+    // Blurred slightly on load -- mimics a long lens shot through glass,
+    // seen out of focus rather than a crisp cardboard cutout pasted
+    // behind the window.
+    const tex = new THREE.TextureLoader().load(dataUri, function(loaded){
+      const img = loaded.image;
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const cctx = c.getContext('2d');
+      cctx.filter = 'blur(1px)';
+      cctx.drawImage(img, 0, 0);
+      loaded.image = c;
+      loaded.needsUpdate = true;
+    });
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 4;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    if(windowAspect > imageAspect){
+      const scale = imageAspect / windowAspect;
+      tex.repeat.set(1, scale);
+      tex.offset.set(0, (1 - scale) / 2);
+    } else {
+      const scale = windowAspect / imageAspect;
+      tex.repeat.set(scale, 1);
+      tex.offset.set((1 - scale) / 2, 0);
+    }
+    return tex;
+  }
+  const skylineTex = makeCoverPhotoTexture(NIGHT_CITYSCAPE_PHOTO, winW / winH, 2.1160092807424595);
+  const glassMat = new THREE.MeshBasicMaterial({ map: skylineTex });
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), glassMat);
+  windowGroup.add(glass);
+
+  // Real photograph of Crested Butte, Colorado, used as the daytime view
+  // out the window. Loaded as a texture and mapped with a "cover" style
+  // fit: the plane matches the window's real opening size exactly, and the
+  // texture's repeat/offset are set from the image's true aspect ratio so
+  // the mountain photo displays undistorted (no stretching to fill the
+  // window) -- any excess is cropped evenly off the top and bottom, since
+  // the window opening is proportionally wider than the source photo.
+  const CRESTED_BUTTE_PHOTO = 'images/image_013.webp';
+  function makePhotoLandscapeTexture(windowAspect, imageAspect){
+    // Same subtle out-of-focus treatment as the night photo, so the daytime
+    // view reads as depth/atmosphere through glass rather than a sharp
+    // photo pasted flat behind the window.
+    const tex = new THREE.TextureLoader().load(CRESTED_BUTTE_PHOTO, function(loaded){
+      const img = loaded.image;
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const cctx = c.getContext('2d');
+      cctx.filter = 'blur(0.6px)';
+      cctx.drawImage(img, 0, 0);
+      loaded.image = c;
+      loaded.needsUpdate = true;
+    });
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 4;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    if(windowAspect > imageAspect){
+      // Window opening is relatively wider than the photo: match full
+      // width, crop top/bottom evenly to preserve real proportions.
+      const scale = imageAspect / windowAspect; // <1
+      tex.repeat.set(1, scale);
+      tex.offset.set(0, (1 - scale) / 2);
+    } else {
+      // Window opening is relatively taller than the photo: match full
+      // height, crop left/right evenly.
+      const scale = windowAspect / imageAspect; // <1
+      tex.repeat.set(scale, 1);
+      tex.offset.set((1 - scale) / 2, 0);
+    }
+    return tex;
+  }
+  const landscapeTex = makePhotoLandscapeTexture(winW / winH, 1.7758046614872365);
+  const landscapeMat = new THREE.MeshBasicMaterial({ map: landscapeTex, transparent: true, opacity: 0 });
+  const landscape = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), landscapeMat);
+  landscape.position.z = 0.0006; // a hair in front of the night skyline, so it crossfades on top
+  windowGroup.add(landscape);
+  windowSceneRefs = { nightMat: glassMat, dayMat: landscapeMat };
+
+  // ---------- Halloween photo, outside the window (independent toggle) ----------
+  // A third, independent layer stacked in front of both the night skyline and
+  // the day landscape. It only ever fades in/out via its own opacity — set by
+  // the dedicated Halloween toggle script near the end of the file — and never
+  // touches the day/night crossfade, sunFactor, rain, or any other effect.
+  // Which image set fills this window layer depends on window.currentTheme.
+  // "normal" and "halloween" keep using the original Halloween photos
+  // (unchanged); "christmas" swaps in the Christmas night/day photos.
+  // ---------- Window photos per theme ----------
+  // TO ADD A NEW SCENE (summer, birthday, ...): add one entry below with a
+  // night + day photo, and set window.currentTheme to its name. Nothing
+  // else is needed — photos are never downloaded at startup. They load the
+  // first time the window layer starts fading in (any toggle that drives
+  // windowSceneRefs.halloweenMat triggers it automatically), or quietly
+  // a few seconds after the page finishes loading, whichever comes first.
+  // Unknown theme names fall back to the "normal" photos.
+  const THEME_WINDOW_PHOTOS = {
+    normal:    { night: 'images/image_014.webp',       day: 'images/image_015.webp' },
+    halloween: { night: 'images/image_014.webp',       day: 'images/image_015.webp' },
+    christmas: { night: 'images/christmas_night.webp', day: 'images/christmas_day.webp' }
+    // summer:  { night: 'images/summer_night.webp',    day: 'images/summer_day.webp' },
+  };
+  const _themePhotos = THEME_WINDOW_PHOTOS[window.currentTheme] || THEME_WINDOW_PHOTOS.normal;
+  const HALLOWEEN_PHOTO = _themePhotos.night;
+  const HALLOWEEN_DAY_PHOTO = _themePhotos.day;
+
+  function makeHalloweenTexture(windowAspect, imageAspect, dataUri){
+    // Lazy: starts empty (nothing downloaded at startup); fetches the photo
+    // the first time __startLoad() runs.
+    const tex = new THREE.Texture();
+    let started = false;
+    tex.__startLoad = function(){
+      if(started) return;
+      started = true;
+      new THREE.TextureLoader().load(dataUri || HALLOWEEN_PHOTO, function(loaded){
+        const img = loaded.image;
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const cctx = c.getContext('2d');
+        cctx.filter = 'blur(0.6px)';
+        cctx.drawImage(img, 0, 0);
+        tex.image = c;
+        tex.needsUpdate = true;
+      });
+    };
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = 4;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    if(windowAspect > imageAspect){
+      const scale = imageAspect / windowAspect;
+      tex.repeat.set(1, scale);
+      tex.offset.set(0, (1 - scale) / 2);
+    } else {
+      const scale = windowAspect / imageAspect;
+      tex.repeat.set(scale, 1);
+      tex.offset.set((1 - scale) / 2, 0);
+    }
+    return tex;
+  }
+  const halloweenTex = makeHalloweenTexture(winW / winH, 1.772823779193206, HALLOWEEN_PHOTO);
+  const halloweenMat = new THREE.MeshBasicMaterial({ map: halloweenTex, transparent: true, opacity: 0, depthWrite: false });
+  const halloweenPlane = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), halloweenMat);
+  halloweenPlane.position.z = 0.0012; // in front of both the night skyline and the day landscape
+  windowGroup.add(halloweenPlane);
+  windowSceneRefs.halloweenMat = halloweenMat;
+
+  // Daytime version of the Halloween photo: an independent layer stacked just
+  // in front of the night Halloween photo above. It never touches hwOn (the
+  // night plane's own opacity, still the single source of truth read by the
+  // leaves, LED colors, glow light, and beam below) — it only crossfades in
+  // front of the night photo as the day/night toggle's own crossfade amount
+  // (windowSceneRefs.dayMat.opacity) rises, fully covering the night photo
+  // once day is reached, and receding to reveal it again at night.
+  const halloweenDayTex = makeHalloweenTexture(winW / winH, 1.772823779193206, HALLOWEEN_DAY_PHOTO);
+  const halloweenDayMat = new THREE.MeshBasicMaterial({ map: halloweenDayTex, transparent: true, opacity: 0, depthWrite: false });
+  // Starts downloading this theme's window photos (idempotent).
+  window.__loadThemePhotos = function(){
+    halloweenTex.__startLoad();
+    halloweenDayTex.__startLoad();
+  };
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      if('requestIdleCallback' in window) requestIdleCallback(window.__loadThemePhotos, { timeout: 4000 });
+      else window.__loadThemePhotos();
+    }, 5000);
+  });
+  const halloweenDayPlane = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), halloweenDayMat);
+  halloweenDayPlane.position.z = 0.0016; // further in front of the night Halloween photo, avoiding z-fighting
+  windowGroup.add(halloweenDayPlane);
+  windowSceneRefs.halloweenDayMat = halloweenDayMat;
+
+  // Falling autumn leaves "raining" past outside the Halloween window view.
+  // Each leaf is its own small tinted sprite (sharing one grayscale leaf
+  // shape texture, tinted per-leaf via material.color so no per-instance
+  // color API is needed on this three.js version) that the render loop
+  // below drops straight down the window each frame, swaying side to side
+  // and tumbling as it falls, and recycling back to the top once it drops
+  // out of view — a continuous "rain of leaves" rather than a single pass.
+  // Every leaf sits at zero opacity by default and is scaled only by the
+  // Halloween toggle's own fade (windowSceneRefs.halloweenMat.opacity), so
+  // the whole effect fades in/out with the Halloween scene and is otherwise
+  // invisible.
+  function makeLeafSpriteTexture(){
+    // A stylized 5-lobed maple-leaf silhouette (pointed lobes with a
+    // notch between each), a short stem at the base, and a fan of veins
+    // radiating from the stem out to each lobe tip — echoing a real
+    // maple leaf's shape rather than the plain almond used previously.
+    const s = 96;
+    const c = document.createElement('canvas'); c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    ctx.translate(s/2, s/2);
+
+    // Outline points, right half only, from the stem base up to the top
+    // tip — mirrored across x=0 to complete the left half. Each entry is
+    // either a lobe tip (sharp, drawn with lineTo) or a notch between
+    // lobes (drawn with a quadraticCurveTo for a rounded inward dip).
+    const stem   = { x: 0,     y:  0.47*s };
+    const tip1   = { x: 0.30*s, y:  0.27*s };  // lower side lobe
+    const notch1 = { x: 0.13*s, y:  0.15*s };
+    const tip2   = { x: 0.47*s, y:  0.00*s };  // middle side lobe (widest)
+    const notch2 = { x: 0.19*s, y: -0.10*s };
+    const tip3   = { x: 0.33*s, y: -0.32*s };  // upper side lobe
+    const notch3 = { x: 0.10*s, y: -0.34*s };
+    const top    = { x: 0,      y: -0.49*s };  // central top lobe
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(stem.x, stem.y);
+    ctx.lineTo(tip1.x, tip1.y);
+    ctx.quadraticCurveTo((tip1.x+notch1.x)/2, (tip1.y+notch1.y)/2 - 0.03*s, notch1.x, notch1.y);
+    ctx.lineTo(tip2.x, tip2.y);
+    ctx.quadraticCurveTo((tip2.x+notch2.x)/2, (tip2.y+notch2.y)/2 - 0.03*s, notch2.x, notch2.y);
+    ctx.lineTo(tip3.x, tip3.y);
+    ctx.quadraticCurveTo((tip3.x+notch3.x)/2, (tip3.y+notch3.y)/2 - 0.03*s, notch3.x, notch3.y);
+    ctx.lineTo(top.x, top.y);
+    // mirror back down the left side
+    ctx.lineTo(-notch3.x, notch3.y);
+    ctx.quadraticCurveTo(-(tip3.x+notch3.x)/2, (tip3.y+notch3.y)/2 - 0.03*s, -tip3.x, tip3.y);
+    ctx.lineTo(-notch2.x, notch2.y);
+    ctx.quadraticCurveTo(-(tip2.x+notch2.x)/2, (tip2.y+notch2.y)/2 - 0.03*s, -tip2.x, tip2.y);
+    ctx.lineTo(-notch1.x, notch1.y);
+    ctx.quadraticCurveTo(-(tip1.x+notch1.x)/2, (tip1.y+notch1.y)/2 - 0.03*s, -tip1.x, tip1.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Short stem trailing off the base.
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = s*0.02;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(stem.x, stem.y);
+    ctx.lineTo(stem.x, stem.y + 0.07*s);
+    ctx.stroke();
+
+    // Central vein plus a fan of veins out to each lobe tip, all
+    // converging near the stem — same visual language as the reference
+    // maple leaf's radiating vein structure.
+    ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+    ctx.lineWidth = s*0.012;
+    const veinStart = { x: 0, y: 0.30*s };
+    [top, tip1, tip2, tip3, {x:-tip1.x,y:tip1.y}, {x:-tip2.x,y:tip2.y}, {x:-tip3.x,y:tip3.y}].forEach(pt=>{
+      ctx.beginPath();
+      ctx.moveTo(veinStart.x, veinStart.y);
+      ctx.lineTo(pt.x*0.92, pt.y*0.92);
+      ctx.stroke();
+    });
+    ctx.beginPath();
+    ctx.moveTo(stem.x, stem.y);
+    ctx.lineTo(top.x, top.y);
+    ctx.stroke();
+
+    return new THREE.CanvasTexture(c);
+  }
+  const leafSpriteTex = makeLeafSpriteTexture();
+  const leafColors = [0xc9591c, 0xe08a2b, 0xa8391f, 0xd4a017, 0x8a4a1f, 0xb5651d];
+  const leafCount = isMobilePerfTier ? 26 : 48;
+  const halloweenLeaves = [];
+  const leafGroup = new THREE.Group();
+  leafGroup.position.z = 0.0018; // above the Halloween photo, below the rain layers
+  windowGroup.add(leafGroup);
+
+  // The window sits on the side wall with windowGroup.rotation.y = -90°,
+  // which maps this group's local +x straight onto world +z. Since the
+  // room's back wall (and the TV mounted on it) is at world z = -halfL,
+  // *negative* local x here is the half of the window nearest the TV
+  // corner — and because that half is viewed from a much more oblique,
+  // foreshortened angle by the usual camera positions than the near/front
+  // half, leaves spawned there read as sparser even with a plain uniform
+  // spread. leafSideBiasFrac skews spawns toward that half to compensate,
+  // and leaves spawned there also get a small size/opacity boost below.
+  const leafHalfSpanX = winW * 0.92 * 0.5;
+  const leafSideBiasFrac = 0.58;
+  function pickLeafBaseX(){
+    return Math.random() < leafSideBiasFrac
+      ? -Math.random()*leafHalfSpanX
+      :  Math.random()*leafHalfSpanX;
+  }
+
+  for(let i=0;i<leafCount;i++){
+    const baseSize = winH * (0.045 + Math.random()*0.04);
+    const mat = new THREE.MeshBasicMaterial({
+      map: leafSpriteTex, color: leafColors[i % leafColors.length],
+      transparent: true, depthWrite: false, opacity: 0, side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(baseSize, baseSize), mat);
+    const baseX = pickLeafBaseX();
+    // Leaves are queued above the window's top edge rather than scattered
+    // at random heights inside the visible frame, so the very first frames
+    // of Halloween mode show them entering from the top and falling all
+    // the way down instead of a batch of leaves already mid-air. Spreading
+    // that queue across one full window-height of "waiting room" above the
+    // entry line keeps the leaves continuous once they do start arriving.
+    const leafTopEdge = winH*0.5 - winH*0.04;
+    const leaf = {
+      mesh, mat,
+      baseX,
+      y: leafTopEdge + Math.random()*winH,
+      // Base fall speed plus a slow "gust" modulation applied each frame
+      // below, so leaves don't all drop at one unwavering rate.
+      fallSpeed: winH * (0.045 + Math.random()*0.05),
+      gustAmp: 0.12 + Math.random()*0.22,
+      gustFreq: 0.15 + Math.random()*0.25,
+      gustPhase: Math.random()*Math.PI*2,
+      // Two layered sway waves (slow/wide + quick/small) read as a far
+      // more organic, wind-tossed drift than one clean sine ever does.
+      swayAmp: winW * (0.018 + Math.random()*0.03),
+      swayFreq: 0.45 + Math.random()*0.75,
+      swayPhase: Math.random()*Math.PI*2,
+      swayAmp2: winW * (0.006 + Math.random()*0.012),
+      swayFreq2: 1.6 + Math.random()*1.7,
+      swayPhase2: Math.random()*Math.PI*2,
+      rotSpeed: (Math.random()-0.5) * 2.2,
+      rotPhase: Math.random()*Math.PI*2,
+      // Tumble makes the flat leaf sprite periodically narrow toward
+      // edge-on and back, mimicking a leaf turning end-over-end in 3D
+      // as it falls rather than just spinning flat like a coin.
+      tumbleFreq: 0.7 + Math.random()*1.1,
+      tumblePhase: Math.random()*Math.PI*2,
+      baseOpacity: 0.65 + Math.random()*0.3,
+      baseSize
+    };
+    mesh.position.set(baseX, leaf.y, 0);
+    leafGroup.add(mesh);
+    halloweenLeaves.push(leaf);
+  }
+  windowSceneRefs.halloweenLeaves = halloweenLeaves;
+
+  // ---------- Christmas snowstorm, outside the window (independent toggle) ----------
+  // A field of small falling snowflake sprites, all sharing one soft round
+  // dot texture (tinted/sized per-instance the same way the leaves above
+  // are tinted per-instance), drifting down through the window's outside
+  // scene like the leaves but tuned for an active, windy snowstorm rather
+  // than a lazy autumn drift: each flake carries a "depth" (0 = far/back,
+  // 1 = near/front) that drives its size, speed, brightness and how far it
+  // leans sideways as it falls, so near flakes read as big, quick and
+  // bright while far flakes read as small, slow and faint — a cheap but
+  // effective depth cue without any real 3D parallax. Every flake sits at
+  // zero opacity by default and is scaled only by the Christmas toggle's
+  // own fade (windowSceneRefs.halloweenMat.opacity — the same opacity that
+  // also drives the Christmas photo layer, mirroring how hwOn drives the
+  // Halloween leaves), so the whole storm fades in/out with the Christmas
+  // scene and is otherwise invisible. Restricted to currentTheme ===
+  // "christmas" in the render loop below so it never appears while that
+  // same opacity is instead fading in the Halloween leaves/photo.
+  function makeSnowflakeTexture(){
+    // A soft, feathered white dot — reads as a snowflake at these small
+    // on-screen sizes without the cost of drawing individual crystal arms.
+    const s = 64;
+    const c = document.createElement('canvas'); c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.9)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(s/2, s/2, s/2, 0, Math.PI*2);
+    ctx.fill();
+    return new THREE.CanvasTexture(c);
+  }
+  // Inset well short of the window's actual half-width so there's room for
+  // the per-flake wind lean below (which pushes flakes further sideways as
+  // they fall) to fully fade out before a flake would otherwise reach the
+  // physical edge of the window pane.
+  const snowHalfSpanX = winW * 0.40;
+  function pickSnowBaseX(){
+    return (Math.random()*2 - 1) * snowHalfSpanX;
+  }
+
+  // Built after the first rendered frame (see the call right after animate()
+  // below): the storm is fully transparent until the Christmas toggle fades
+  // it in, and the render loop already skips it while its refs are unset.
+  function buildSnowstorm(){
+  const snowSpriteTex = makeSnowflakeTexture();
+  // Fewer flakes on the mobile perf tier, same ratio the leaves use above.
+  const snowCount = isMobilePerfTier ? 55 : 110;
+  const snowflakes = [];
+  const snowGroup = new THREE.Group();
+  snowGroup.position.z = 0.0019; // just in front of the leaf layer, still behind the frame/glass
+  windowGroup.add(snowGroup);
+
+  for(let i=0;i<snowCount;i++){
+    // depth: 0 = far/back (small, slow, dim), 1 = near/front (large, fast, bright).
+    const depth = Math.random();
+    const baseSize = winH * (0.006 + depth*0.022 + Math.random()*0.006);
+    const mat = new THREE.MeshBasicMaterial({
+      map: snowSpriteTex, color: 0xffffff,
+      transparent: true, depthWrite: false, opacity: 0
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(baseSize, baseSize), mat);
+    const baseX = pickSnowBaseX();
+    // Flakes are queued above the window's top edge, spread across a bit
+    // more than one full window-height of "waiting room" above the entry
+    // line (same trick the leaves use), so the first frames of Christmas
+    // mode already show a storm in progress rather than an empty sky that
+    // slowly fills in.
+    const snowTopEdge = winH*0.5 - winH*0.02;
+    const flake = {
+      mesh, mat, depth,
+      baseX,
+      y: snowTopEdge + Math.random()*winH*1.3,
+      fallSpeed: winH * (0.028 + depth*0.085 + Math.random()*0.02),
+      // Gust modulation on fall speed, so the storm's intensity breathes
+      // rather than falling at one flat, mechanical rate.
+      gustAmp: 0.15 + Math.random()*0.25,
+      gustFreq: 0.2 + Math.random()*0.3,
+      gustPhase: Math.random()*Math.PI*2,
+      // Sideways lean per unit fallen — a steady-ish "wind" pushing flakes
+      // to one side as they drop, biased mostly one direction (like real
+      // wind-driven snow) but with per-flake spread so it doesn't look
+      // like uniform rain-on-an-angle.
+      windLean: 0.02 + Math.random()*0.06,
+      // A small extra side-to-side sway layered on top of the wind lean,
+      // for a bit of natural flutter.
+      swayAmp: winW * (0.004 + Math.random()*0.01) * (0.4 + depth*0.6),
+      swayFreq: 0.35 + Math.random()*0.55,
+      swayPhase: Math.random()*Math.PI*2,
+      rotSpeed: (Math.random()-0.5) * 1.1,
+      rotPhase: Math.random()*Math.PI*2,
+      baseOpacity: 0.22 + depth*0.55 + Math.random()*0.15,
+      baseSize
+    };
+    mesh.position.set(baseX, flake.y, depth*0.0006 - 0.0003);
+    snowGroup.add(mesh);
+    snowflakes.push(flake);
+  }
+  windowSceneRefs.snowflakes = snowflakes;
+
+  // A faint, warm additive glow low in the window, standing in for ambient
+  // outdoor light (porch/streetlights) catching the falling snow — same
+  // radial-gradient-on-canvas technique as the other window glows above,
+  // built locally so nothing shared is touched. Fades in/out with the same
+  // Christmas opacity as the flakes themselves, and breathes gently with
+  // night-factor so it's barely-there by day and a soft glow at night.
+  function makeSnowGlowTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+    grad.addColorStop(0,    'rgba(255,244,214,0.5)');
+    grad.addColorStop(0.5,  'rgba(255,230,180,0.18)');
+    grad.addColorStop(1,    'rgba(255,230,180,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  const snowGlowTex = makeSnowGlowTexture();
+  const snowGlowMat = new THREE.MeshBasicMaterial({
+    map: snowGlowTex, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0
+  });
+  const snowGlow = new THREE.Mesh(new THREE.PlaneGeometry(winW*0.9, winH*0.7), snowGlowMat);
+  snowGlow.position.set(0, -winH*0.12, 0.0017);
+  windowGroup.add(snowGlow);
+  windowSceneRefs.snowGlowMat = snowGlowMat;
+  }
+
+  // ---------- Daytime clouds, drifting over the landscape photo ----------
+  // The photo itself has clouds baked into its pixels, so they'd otherwise
+  // sit frozen forever. This paints a handful of soft, bright puffy shapes
+  // confined to the upper sky band of the frame and scrolls them sideways
+  // each frame (wrapping seamlessly, same trick as the night wisps below),
+  // so real motion reads against the photo's own sky and treeline.
+  function makeDayCloudTexture(windowAspect){
+    const w = 1024;
+    const h = Math.max(1, Math.round(w / windowAspect));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    // A soft puffy cloud made of overlapping blurred-edge circles.
+    function drawPuff(cx, cy, scale, alpha){
+      const lobes = 6 + Math.floor(Math.random()*4);
+      for(let i=0;i<lobes;i++){
+        const ang = (i/lobes) * Math.PI * 2;
+        const lx = cx + Math.cos(ang)*scale*0.55*(0.6+Math.random()*0.5);
+        const ly = cy + Math.sin(ang)*scale*0.22*(0.5+Math.random()*0.6) - scale*0.08;
+        const r = scale*(0.32 + Math.random()*0.22);
+        const g = ctx.createRadialGradient(lx,ly,0,lx,ly,r);
+        g.addColorStop(0.00, `rgba(255,255,255,${alpha})`);
+        g.addColorStop(0.60, `rgba(255,255,255,${alpha*0.7})`);
+        g.addColorStop(1.00, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(lx, ly, r, r*0.62, 0, 0, Math.PI*2);
+        ctx.fill();
+      }
+      // a soft flat-bottomed body underneath the lobes, like real cumulus
+      const bg = ctx.createRadialGradient(cx, cy+scale*0.12, 0, cx, cy+scale*0.12, scale*0.75);
+      bg.addColorStop(0.00, `rgba(255,255,255,${alpha*0.9})`);
+      bg.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy+scale*0.12, scale*0.75, scale*0.32, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // Scatter a few puffs in the upper ~42% of the frame (sky above the
+    // treeline), each redrawn shifted by ±w so the tile wraps seamlessly.
+    const puffCount = 5;
+    for(let i=0;i<puffCount;i++){
+      const cx = Math.random()*w;
+      const cy = h * (0.05 + Math.random()*0.32);
+      const scale = w * (0.09 + Math.random()*0.07);
+      const alpha = 0.5 + Math.random()*0.3;
+      drawPuff(cx, cy, scale, alpha);
+      drawPuff(cx - w, cy, scale, alpha);
+      drawPuff(cx + w, cy, scale, alpha);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = 4;
+    return tex;
+  }
+  dayCloudTex = makeDayCloudTexture(winW / winH);
+  dayCloudMat = new THREE.MeshBasicMaterial({
+    map: dayCloudTex, transparent: true, depthWrite: false, opacity: 0
+  });
+  const dayClouds = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), dayCloudMat);
+  dayClouds.position.z = 0.0007; // just in front of the landscape photo
+  windowGroup.add(dayClouds);
+
+  // High-altitude clouds, painted as soft wispy streaks confined to the
+  // upper sky. The canvas is authored so its left and right edges match,
+  // making it seamless when tiled — the texture is then scrolled a hair's
+  // width per frame in the render loop for a slow, cinematic drift that's
+  // almost unnoticeable at first glance.
+  function makeCloudTexture(aspect){
+    const w = 1536;
+    const h = Math.max(1, Math.round(w / aspect));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    // A soft, elongated wisp made of overlapping blurred ellipses.
+    function drawWisp(cx, cy, len, thick, alpha){
+      const blobs = 5 + Math.floor(Math.random()*4);
+      for(let i=0; i<blobs; i++){
+        const t = (i/(blobs-1)) - 0.5;             // -0.5 .. 0.5 along the wisp
+        const bx = cx + t*len;
+        const by = cy + Math.sin(t*Math.PI)*thick*0.18 + (Math.random()-0.5)*thick*0.25;
+        const rx = (len/blobs) * (0.9 + Math.random()*0.6);
+        const ry = thick * (0.55 + Math.random()*0.5) * (1 - Math.abs(t)*0.5);
+        const g = ctx.createRadialGradient(bx, by, 0, bx, by, Math.max(rx, ry));
+        g.addColorStop(0.00, `rgba(255,255,255,${alpha})`);
+        g.addColorStop(0.55, `rgba(255,255,255,${alpha*0.55})`);
+        g.addColorStop(1.00, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.scale(1, ry/rx);
+        ctx.beginPath();
+        ctx.arc(0, 0, rx, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Scatter wisps across the upper ~55% of the frame (high altitude),
+    // each one also redrawn shifted by ±w so the tile wraps seamlessly.
+    const wispCount = 9;
+    for(let i=0; i<wispCount; i++){
+      const cx = Math.random()*w;
+      const cy = h * (0.06 + Math.random()*0.42);
+      const len = w * (0.10 + Math.random()*0.16);
+      const thick = h * (0.03 + Math.random()*0.05);
+      const alpha = 0.05 + Math.random()*0.09;
+      drawWisp(cx, cy, len, thick, alpha);
+      drawWisp(cx - w, cy, len, thick, alpha);
+      drawWisp(cx + w, cy, len, thick, alpha);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = 4;
+    return tex;
+  }
+  cloudTex = makeCloudTexture(winW / winH);
+  const cloudMat = new THREE.MeshBasicMaterial({
+    map: cloudTex, transparent: true, depthWrite: false, opacity: 0.85
+  });
+  const clouds = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), cloudMat);
+  clouds.position.z = 0.001; // a hair in front of the sky, behind the frame
+  windowGroup.add(clouds);
+
+  // Soft glow behind the glass (additive, radial) — cool blue with a faint
+  // violet-warm edge, echoing the last light of the horizon at blue hour
+  function radialTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+    grad.addColorStop(0, 'rgba(110,128,180,0.55)');
+    grad.addColorStop(1, 'rgba(70,60,100,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  const glowTex = radialTexture();
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(winW*1.5, winH*1.5),
+    new THREE.MeshBasicMaterial({ map: glowTex, transparent:true, blending: THREE.AdditiveBlending, depthWrite:false })
+  );
+  glow.position.z = -0.05;
+  windowGroup.add(glow);
+
+  // Lightning flash on the sky itself — a broad, soft-edged wash sitting
+  // behind everything else in the window (farthest back, like a flash lighting
+  // up distant clouds), cool blue-white so it reads as a storm rather than a
+  // second sun. Opacity is driven entirely by the lightning schedule in the
+  // render loop below; it stays invisible until a strike happens, at night.
+  function lightningFlashTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(128,150,0,128,150,180);
+    g.addColorStop(0.00, 'rgba(224,234,255,0.95)');
+    g.addColorStop(0.35, 'rgba(198,214,255,0.55)');
+    g.addColorStop(1.00, 'rgba(198,214,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  lightningFlashMat = new THREE.MeshBasicMaterial({
+    map: lightningFlashTexture(), transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0
+  });
+  const lightningFlash = new THREE.Mesh(new THREE.PlaneGeometry(winW*1.7, winH*1.7), lightningFlashMat);
+  lightningFlash.position.z = -0.08;
+  windowGroup.add(lightningFlash);
+
+  // ---------- Premium touch: a real sun flare on the glass ----------
+  // A bright, off-center glare sitting where direct sun would actually hit
+  // this pane (biased toward the same corner sunDir points from), kept at
+  // zero opacity by default and eased in only once the sun is up — driven
+  // each frame by sunFactor, alongside the sunbeams/motes/table glow below,
+  // so the glass itself visibly comes alive with daylight rather than just
+  // the room around it.
+  function sunFlareTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(128,128,0,128,128,128);
+    g.addColorStop(0.00, 'rgba(255,252,238,0.95)');
+    g.addColorStop(0.16, 'rgba(255,246,214,0.7)');
+    g.addColorStop(0.42, 'rgba(255,228,168,0.22)');
+    g.addColorStop(1.00, 'rgba(255,228,168,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,256,256);
+    return new THREE.CanvasTexture(c);
+  }
+  sunFlareMat = new THREE.MeshBasicMaterial({
+    map: sunFlareTexture(), transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0
+  });
+  const sunFlare = new THREE.Mesh(new THREE.PlaneGeometry(winW*0.62, winW*0.62), sunFlareMat);
+  sunFlare.position.set(winW*0.24, winH*0.22, -0.045);
+  windowGroup.add(sunFlare);
+
+  // Frame + mullions (cast shadow bars into the room) — premium matte black
+  // brushed aluminum, built on the same brushed-metal color/roughness/bump
+  // maps used for the gallery-wall picture frames, so the window reads as
+  // the same real architectural material rather than flat painted trim.
+  const frameMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1c1d1f,
+    map: brushedMetal.colorMap,
+    roughnessMap: brushedMetal.roughMap,
+    bumpMap: brushedMetal.bumpMap,
+    bumpScale: 0.0005,
+    roughness: 0.55,
+    metalness: 0.85,
+    envMap: hdriEnvMap,
+    envMapIntensity: 0.75,
+    clearcoat: 0.12,
+    clearcoatRoughness: 0.45
+  });
+  function bar(w,h,d, x,y,z){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), frameMat);
+    m.position.set(x,y,z);
+    m.castShadow = true; m.receiveShadow = true;
+    windowGroup.add(m);
+    return m;
+  }
+  const frameDepth = 0.08, frameThick = 0.07;
+
+  // ---------- Ambient occlusion where the frame meets the wall ----------
+  // A soft dark ring sitting just behind the frame, flush against the wall
+  // plane, that reads as the contact shadow a flush-mounted aluminum frame
+  // always casts into the crevice where its outer edge presses into drywall
+  // — brightest right at the frame's edge, fading out over a few inches of
+  // wall rather than reading as a hard painted outline.
+  function makeWindowAOTexture(outerW, outerH){
+    const cw = 512, ch = Math.max(1, Math.round(cw * (outerH / outerW)));
+    const pad = Math.round(cw * 0.16);
+    const canvas = document.createElement('canvas');
+    canvas.width = cw + pad*2; canvas.height = ch + pad*2;
+    const ctx = canvas.getContext('2d');
+    ctx.shadowColor = 'rgba(15,13,9,0.65)';
+    ctx.shadowBlur = pad*0.9;
+    ctx.fillStyle = 'rgba(15,13,9,0.65)';
+    ctx.fillRect(pad, pad, cw, ch);
+    // Punch the middle back out so the AO reads as a soft frame-shaped halo
+    // rather than a solid dark rectangle — the visible area is only the
+    // sliver that peeks past the frame's physical footprint.
+    ctx.globalCompositeOperation = 'destination-out';
+    const inset = Math.round(cw * 0.055);
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.fillRect(pad+inset, pad+inset, cw-inset*2, ch-inset*2);
+    return new THREE.CanvasTexture(canvas);
+  }
+  // (Window AO ring removed — was reading as a faint gray ring around the window.)
+
+  // Sill contact shadow — the same soft grounding shadow a threshold casts
+  // onto the wall directly beneath it.
+  const sillAO = new THREE.Mesh(
+    new THREE.PlaneGeometry(winW + 0.32, 0.16),
+    new THREE.MeshBasicMaterial({
+      map: makeWindowAOTexture(winW+0.16, 0.05),
+      transparent: true, depthWrite: false, opacity: 0.5
+    })
+  );
+  sillAO.position.set(0, -winH/2 - 0.03, 0.004);
+  windowGroup.add(sillAO);
+
+  // outer frame
+  bar(winW+frameThick, frameThick, frameDepth, 0,  winH/2, frameDepth/2);
+  bar(winW+frameThick, frameThick, frameDepth, 0, -winH/2, frameDepth/2);
+  bar(frameThick, winH+frameThick, frameDepth,  winW/2, 0, frameDepth/2);
+  bar(frameThick, winH+frameThick, frameDepth, -winW/2, 0, frameDepth/2);
+
+  // Edge highlights: a thin, brighter brushed-aluminum bevel along the
+  // outer frame's inner lip, right where it meets the glass — a machined
+  // aluminum extrusion always carries a crisp highlight here, catching
+  // ambient light along a hard edge the way the flat frame face doesn't.
+  const edgeHighlightMat = new THREE.MeshPhysicalMaterial({
+    color: 0x45484d,
+    map: brushedMetal.colorMap,
+    roughnessMap: brushedMetal.roughMap,
+    roughness: 0.25,
+    metalness: 0.95,
+    envMap: hdriEnvMap,
+    envMapIntensity: 1.3,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.18
+  });
+  function edgeBevel(w,h,x,y,z){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,0.003), edgeHighlightMat);
+    m.position.set(x,y,z);
+    windowGroup.add(m);
+    return m;
+  }
+  const bevelT = 0.006, bevelZ = frameDepth - 0.002;
+  edgeBevel(winW, bevelT, 0,  winH/2 - frameThick/2 - bevelT/2, bevelZ);
+  edgeBevel(winW, bevelT, 0, -(winH/2 - frameThick/2) + bevelT/2, bevelZ);
+  edgeBevel(bevelT, winH, winW/2 - frameThick/2 - bevelT/2, 0, bevelZ);
+  edgeBevel(bevelT, winH, -(winW/2 - frameThick/2) + bevelT/2, 0, bevelZ);
+
+  // grid of mullions: 3 vertical divisions, 4 horizontal divisions
+  const cols = 3, rows = 4;
+  const mThick = 0.05, mDepth = frameDepth*0.85;
+  for(let c=1; c<cols; c++){
+    const x = -winW/2 + (winW/cols)*c;
+    bar(mThick, winH, mDepth, x, 0, frameDepth/2 - 0.005);
+  }
+  for(let r=1; r<rows; r++){
+    const y = -winH/2 + (winH/rows)*r;
+    bar(winW, mThick, mDepth, 0, y, frameDepth/2 - 0.005);
+  }
+
+  // Low threshold at the base instead of a bulky sill
+  const sill = new THREE.Mesh(new THREE.BoxGeometry(winW+0.16, 0.03, 0.12), frameMat);
+  sill.position.set(0, -winH/2 - 0.02, 0.06);
+  sill.receiveShadow = true; sill.castShadow = true;
+  windowGroup.add(sill);
+
+  // ---------- Christmas string lights, wrapped around the window's outer frame ----------
+  // A strand of small red/green/warm-white bulbs traces the outer edge of
+  // the frame (built in the window's own local space, so it inherits the
+  // window's real position/rotation/perspective exactly like the frame
+  // itself does) and sits just proud of the frame's front face — never
+  // crossing the glass. Same always-present, zero-by-default approach as
+  // the other Christmas strands: built once here, only ever driven above
+  // zero opacity/intensity by the render loop, gated to currentTheme ===
+  // "christmas" and faded by the same opacity the Christmas toggle already
+  // animates for the window photo.
+  {
+    function makeWinBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const winBulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const winBulbGlowTex = makeWinBulbGlowTexture();
+    const winBulbCoreTex = makeXmasBulbCoreTexture();
+    const winBulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
+    const winBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const winBulbMats = winBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const winBulbGlowMats = winBulbColors.map(c => new THREE.SpriteMaterial({
+      map: winBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    const winBulbCoreMats = winBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: winBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    windowFrameChristmasLights = { bulbMats: winBulbMats, bulbGlowMats: winBulbGlowMats, bulbCoreMats: winBulbCoreMats, pointLights: [] };
+
+    // Outer edge of the physical frame (matches the outer-frame `bar()`
+    // calls above: half-extent = half the opening plus half the frame
+    // thickness), sitting a hair in front of the frame's room-facing face
+    // so the strand reads as mounted on the trim rather than embedded in
+    // it or floating out past it.
+    const winOuterHalfW = winW/2 + frameThick/2;
+    const winOuterHalfH = winH/2 + frameThick/2;
+    const winLightZ = frameDepth + 0.014;
+
+    const winBulbSpacing = 0.16; // average spacing along the strand, meters
+    const winSegments = [
+      { x0: -winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1:  winOuterHalfH }, // top
+      { x0:  winOuterHalfW, y0:  winOuterHalfH, x1:  winOuterHalfW, y1: -winOuterHalfH }, // right
+      { x0:  winOuterHalfW, y0: -winOuterHalfH, x1: -winOuterHalfW, y1: -winOuterHalfH }, // bottom
+      { x0: -winOuterHalfW, y0: -winOuterHalfH, x1: -winOuterHalfW, y1:  winOuterHalfH }  // left
+    ];
+
+    let winColorIdx = 0;
+    winSegments.forEach(seg => {
+      const segLen = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
+      const count = Math.max(2, Math.round(segLen / winBulbSpacing));
+      // Slightly irregular spacing (endpoints pinned to the true corners)
+      // instead of a perfectly even grid.
+      const tArr = xmasJitteredT(count, 0.3);
+      for(let i=0;i<count;i++){
+        const tt = tArr[i];
+        const x = seg.x0 + (seg.x1 - seg.x0) * tt;
+        const y = seg.y0 + (seg.y1 - seg.y0) * tt;
+
+        const ci = winColorIdx % winBulbColors.length;
+        winColorIdx++;
+        const bright = xmasBulbBrightness();
+        const bulb = new THREE.Mesh(winBulbGeo, winBulbMats[ci]);
+        bulb.position.set(x, y, winLightZ);
+        bulb.scale.setScalar(0.85 + bright*0.2);
+        windowGroup.add(bulb);
+        const glow = new THREE.Sprite(winBulbGlowMats[ci]);
+        glow.scale.set(0.042*bright, 0.042*bright, 1);
+        glow.position.set(x, y, winLightZ);
+        windowGroup.add(glow);
+        const core = new THREE.Sprite(winBulbCoreMats[ci]);
+        core.scale.set(0.015*bright, 0.015*bright, 1);
+        core.position.set(x, y, winLightZ);
+        windowGroup.add(core);
+      }
+    });
+
+    // A few soft, low point lights around the frame so the strand casts
+    // the faintest warm touch onto the frame/nearby wall (top, bottom, and
+    // both sides now, instead of only top/bottom), without competing with
+    // the window's own scene lighting. Physically-correct falloff (decay
+    // 2.0) keeps each pool small.
+    const winLightPositions = [
+      { x: 0, y:  winOuterHalfH },
+      { x: 0, y: -winOuterHalfH },
+      { x:  winOuterHalfW, y: 0 },
+      { x: -winOuterHalfW, y: 0 }
+    ];
+    winLightPositions.forEach(p => {
+      const pl = new THREE.PointLight(0xffdca0, 0, 0.9, 2.0);
+      pl.position.set(p.x, p.y, winLightZ);
+      // windowGroup.add(pl); // disabled for performance: negligible contribution
+      windowFrameChristmasLights.pointLights.push(pl);
+    });
+
+    // ---------- Same strand extended onto the interior mullions ----------
+    // Follows the actual vertical/horizontal dividing bars built above
+    // (same cols/rows grid, same x/y positions), sitting just proud of
+    // each mullion's own front face — never over the bare glass between
+    // them. Kept on separate materials so the render loop can dim these a
+    // notch below the outer frame, so the window doesn't read as
+    // uniformly, overly lit.
+    const winMullionBulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const winMullionBulbMats = winBulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const winMullionGlowMats = winBulbColors.map(c => new THREE.SpriteMaterial({
+      map: winBulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    const winMullionCoreMats = winBulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: winBulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    windowFrameChristmasLights.mullionBulbMats = winMullionBulbMats;
+    windowFrameChristmasLights.mullionGlowMats = winMullionGlowMats;
+    windowFrameChristmasLights.mullionCoreMats = winMullionCoreMats;
+
+    // Just proud of each mullion's own front face (mullions are centered
+    // at frameDepth/2 - 0.005 with depth mDepth, so their front face sits
+    // at that center plus half their depth).
+    const mullionLightZ = (frameDepth/2 - 0.005) + (mDepth/2) + 0.012;
+    let mullionColorIdx = 0;
+    function placeMullionBulbs(points){
+      points.forEach(pt => {
+        const ci = mullionColorIdx % winBulbColors.length;
+        mullionColorIdx++;
+        const bright = xmasBulbBrightness();
+        const bulb = new THREE.Mesh(winMullionBulbGeo, winMullionBulbMats[ci]);
+        bulb.position.set(pt.x, pt.y, mullionLightZ);
+        bulb.scale.setScalar(0.85 + bright*0.2);
+        windowGroup.add(bulb);
+        const glow = new THREE.Sprite(winMullionGlowMats[ci]);
+        glow.scale.set(0.036*bright, 0.036*bright, 1);
+        glow.position.set(pt.x, pt.y, mullionLightZ);
+        windowGroup.add(glow);
+        const core = new THREE.Sprite(winMullionCoreMats[ci]);
+        core.scale.set(0.013*bright, 0.013*bright, 1);
+        core.position.set(pt.x, pt.y, mullionLightZ);
+        windowGroup.add(core);
+      });
+    }
+    // Vertical mullions (cols-1 of them) run the window's full height.
+    for(let c=1; c<cols; c++){
+      const mx = -winW/2 + (winW/cols)*c;
+      const count = Math.max(2, Math.round(winH / winBulbSpacing));
+      const tArr = xmasJitteredT(count, 0.3);
+      const pts = [];
+      for(let i=0;i<count;i++){
+        pts.push({ x: mx, y: -winH/2 + winH*tArr[i] });
+      }
+      placeMullionBulbs(pts);
+    }
+    // Horizontal mullions (rows-1 of them) run the window's full width.
+    for(let r=1; r<rows; r++){
+      const my = -winH/2 + (winH/rows)*r;
+      const count = Math.max(2, Math.round(winW / winBulbSpacing));
+      const tArr = xmasJitteredT(count, 0.3);
+      const pts = [];
+      for(let i=0;i<count;i++){
+        pts.push({ x: -winW/2 + winW*tArr[i], y: my });
+      }
+      placeMullionBulbs(pts);
+    }
+  }
+
+  // ---------- Realistic architectural glass: tint, room reflection, edge thickness ----------
+  // A handful of thin translucent layers sandwiched between the sky/clouds
+  // and the frame. Every one of these is kept low-opacity so the skyline
+  // stays the clear focal point — they only need to whisper "glass," not
+  // shout it.
+
+  // 2) Soft interior reflection — a blurred ghost of the room's own light
+  // bouncing off the inside face of the pane: a cool catch-light along the
+  // ceiling line, a warm low blob echoing the desk/monitor glow off to one
+  // side, and a touch of grazing-angle brightening along the far edge —
+  // the way real glass picks up the room behind the viewer without ever
+  // losing the view through it.
+  function makeReflectionTexture(aspect){
+    const w = 1024, h = Math.max(1, Math.round(w/aspect));
+    const raw = document.createElement('canvas');
+    raw.width = w; raw.height = h;
+    const rctx = raw.getContext('2d');
+    function blob(cx,cy,rx,ry,rgb,alpha){
+      const r = Math.max(rx,ry);
+      const g = rctx.createRadialGradient(cx,cy,0,cx,cy,r);
+      g.addColorStop(0, `rgba(${rgb},${alpha})`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      rctx.fillStyle = g;
+      rctx.save();
+      rctx.translate(cx,cy);
+      rctx.scale(rx/r, ry/r);
+      rctx.beginPath(); rctx.arc(0,0,r,0,Math.PI*2); rctx.fill();
+      rctx.restore();
+    }
+    blob(w*0.5,  h*0.02, w*0.6,  h*0.14, '236,240,244', 0.15); // ceiling catch-light, top
+    blob(w*0.24, h*0.66, w*0.24, h*0.20, '255,205,150', 0.11); // warm desk/monitor glow, low
+    blob(w*0.30, h*0.60, w*0.10, h*0.09, '190,225,255', 0.09); // cool monitor flicker beside it
+    blob(w*0.94, h*0.45, w*0.10, h*0.55, '215,228,236', 0.09); // grazing brightening, far edge
+    rctx.fillStyle = 'rgba(230,236,240,0.05)';
+    rctx.fillRect(0, h*0.14, w, h*0.01); // faint horizontal seam, like a picture rail catching light
+
+    const blurred = document.createElement('canvas');
+    blurred.width = w; blurred.height = h;
+    const bctx = blurred.getContext('2d');
+    bctx.filter = 'blur(26px)';
+    bctx.drawImage(raw, 0, 0);
+
+    const tex = new THREE.CanvasTexture(blurred);
+    tex.encoding = THREE.sRGBEncoding;
+    return tex;
+  }
+  const reflectionMatInst = new THREE.MeshBasicMaterial({
+    map: makeReflectionTexture(winW/winH),
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: reflectionBaseOpacity
+  });
+  reflectionMat = reflectionMatInst;
+  const reflection = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), reflectionMatInst);
+  reflection.position.z = 0.0035;
+  windowGroup.add(reflection);
+
+  // 3) Edge thickness — thin pale strips just inside the frame's inner lip,
+  // where the cut edge of a real pane reads as a slightly denser, greener
+  // sliver of light. Each uses a soft gradient texture so it glows rather
+  // than reading as a hard painted line, giving the glass a felt thickness
+  // without altering the window's placement or silhouette.
+  function makeEdgeGlowTexture(vertical){
+    const c = document.createElement('canvas');
+    c.width = vertical ? 64 : 8;
+    c.height = vertical ? 8 : 64;
+    const ctx = c.getContext('2d');
+    const g = vertical
+      ? ctx.createLinearGradient(0,0,c.width,0)
+      : ctx.createLinearGradient(0,0,0,c.height);
+    g.addColorStop(0.0, 'rgba(223,238,230,0)');
+    g.addColorStop(0.5, 'rgba(223,238,230,0.9)');
+    g.addColorStop(1.0, 'rgba(223,238,230,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,c.width,c.height);
+    return new THREE.CanvasTexture(c);
+  }
+  const edgeGlowH = makeEdgeGlowTexture(true);   // fades left-right, for top/bottom strips
+  const edgeGlowV = makeEdgeGlowTexture(false);  // fades top-bottom, for left/right strips
+  function edgeStrip(w,h,x,y,tex,opacity){
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w,h), mat);
+    m.position.set(x,y,0.012);
+    windowGroup.add(m);
+    windowEdgeGlowMats.push({ mat, base: opacity });
+    return m;
+  }
+  const edgeInset = frameThick*0.55;
+  // top and bottom edges: brighter at top (catches sky light), softer at base
+  edgeStrip(winW - edgeInset*2, 0.028, 0,  winH/2 - edgeInset, edgeGlowH, 0.5);
+  edgeStrip(winW - edgeInset*2, 0.022, 0, -winH/2 + edgeInset, edgeGlowH, 0.24);
+  // side edges: the far edge picks up a touch more grazing-angle brightness
+  edgeStrip(0.024, winH - edgeInset*2,  winW/2 - edgeInset, 0, edgeGlowV, 0.36);
+  edgeStrip(0.024, winH - edgeInset*2, -winW/2 + edgeInset, 0, edgeGlowV, 0.28);
+
+  // ---------- Fake contact-shadow decals (cheap AO for floor contact points) ----------
+  // A soft radial-gradient disc, alpha-blended just above the floor. Cheap
+  // and reliable (no postprocessing dependency), but reads as real grounding
+  // contact shadow / occlusion under legs, feet, and tower corners.
+  function makeContactShadowTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    // Alpha stops eased down from 0.55/0.22 so every contact shadow in the
+    // room (all of which multiply this texture by their own opacity) reads
+    // as a soft, gentle grounding shadow instead of a harsh dark disc.
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0.00, 'rgba(20,16,10,0.36)');
+    g.addColorStop(0.55, 'rgba(20,16,10,0.14)');
+    g.addColorStop(1.00, 'rgba(20,16,10,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  }
+  function addContactShadow(parent, x, z, radiusX, radiusZ, opacity){
+    const mat = new THREE.MeshBasicMaterial({
+      map: contactShadowTex, transparent: true,
+      opacity: opacity !== undefined ? opacity : 0.85,
+      depthWrite: false
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(radiusX*2, radiusZ*2), mat);
+    mesh.rotation.x = -Math.PI/2;
+    mesh.position.set(x, 0.003, z);
+    mesh.renderOrder = 1;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  // ---------- Desk setup: a real, lived-in workspace ----------
+  // Placed on the back wall, tucked into the corner right next to the window.
+  {
+    const deskWallZ   = -halfL;
+    const deskCenterX = 0;   // centered on the back wall
+
+    const setup = new THREE.Group();
+    setup.position.set(deskCenterX, 0, deskWallZ + 0.04);
+    room.add(setup);
+
+    const blackMat    = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.55, metalness: 0.15 });
+    const bezelMat    = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.42, metalness: 0.2 });
+    const screenMat   = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.14, metalness: 0.25, envMapIntensity: 0.8 });
+
+    // ----- Per-monitor screen images (uploaded artwork), left to right -----
+    const monitorImageData = [
+      'images/image_016.webp', // monitor 1 (left)
+      'images/image_017.webp', // monitor 2 (center)
+      'images/image_018.webp'  // monitor 3 (right)
+    ];
+    function makeScreenMaterial(dataUrl){
+      const tex = textureLoader.load(dataUrl);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.anisotropy = 8;
+      tex.colorSpace = THREE.SRGBColorSpace || tex.colorSpace;
+      // toneMapped:false keeps the screen image at its native brightness
+      // regardless of the room's tone-mapping exposure, so it doesn't dim
+      // along with everything else when the day/night toggle drops the
+      // exposure for night mode — the screens should always read as
+      // self-lit, not as objects lit by the room.
+      return new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+    }
+    const metalMat    = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.4,  metalness: 0.7 });
+    const jointMat    = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.32, metalness: 0.78 });
+
+    // ----- Real-material walnut desktop: procedural color/roughness/bump maps -----
+    // Long flowing grain figure, fine pore speckle, and a worn perimeter (soft
+    // polished sheen + scattered nicks concentrated at the edges/corners —
+    // exactly where years of forearms and sleeves actually make contact)
+    // instead of a flat, freshly-milled slab color.
+    function makeWalnutDeskMaps(texW, texH){
+      const grainCount = 170;
+      const grainSeeds = [];
+      for(let i=0;i<grainCount;i++){
+        grainSeeds.push({
+          y0: Math.random()*texH,
+          amp: 4 + Math.random()*16,
+          freq: 0.0018 + Math.random()*0.0045,
+          phase: Math.random()*Math.PI*2,
+          dark: Math.random() < 0.62,
+          w: 0.6 + Math.random()*2.4
+        });
+      }
+
+      // Paints a soft lightened/darkened band along all four canvas edges
+      // (which map 1:1 to the desktop's physical perimeter) plus a scatter
+      // of short nicks/scratches and rounded corner wear patches. `sign`>0
+      // brightens (used for the diffuse color's worn patina); `sign`<0
+      // darkens (used to smooth out the roughness map where finish has
+      // been polished by contact, and to soften the bump at worn edges).
+      function paintEdgeWear(ctx, rgb, sign, edgeAlpha, nickAlpha, cornerAlpha){
+        const bandDepth = texH * 0.05;
+        const bandDepthX = texW * 0.035;
+        const mk = (a,b,x0,y0,x1,y1) => {
+          const g = ctx.createLinearGradient(x0,y0,x1,y1);
+          g.addColorStop(0,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`);
+          g.addColorStop(1,  `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+          return g;
+        };
+        ctx.fillStyle = mk(edgeAlpha,0, 0,0, 0,bandDepth);
+        ctx.fillRect(0,0,texW,bandDepth);
+        ctx.fillStyle = mk(edgeAlpha,0, 0,texH, 0,texH-bandDepth);
+        ctx.fillRect(0,texH-bandDepth,texW,bandDepth);
+        ctx.fillStyle = mk(edgeAlpha,0, 0,0, bandDepthX,0);
+        ctx.fillRect(0,0,bandDepthX,texH);
+        ctx.fillStyle = mk(edgeAlpha,0, texW,0, texW-bandDepthX,0);
+        ctx.fillRect(texW-bandDepthX,0,bandDepthX,texH);
+
+        const nicks = 50;
+        for(let i=0;i<nicks;i++){
+          const edge = Math.floor(Math.random()*4);
+          let x,y;
+          const inset = 3 + Math.random()*16;
+          if(edge===0){ x = Math.random()*texW; y = inset; }
+          else if(edge===1){ x = Math.random()*texW; y = texH-inset; }
+          else if(edge===2){ x = inset; y = Math.random()*texH; }
+          else { x = texW-inset; y = Math.random()*texH; }
+          const len = 3+Math.random()*11;
+          const ang = Math.random()*Math.PI*2;
+          ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${nickAlpha*(0.5+Math.random())})`;
+          ctx.lineWidth = 0.6+Math.random()*1.5;
+          ctx.beginPath();
+          ctx.moveTo(x,y);
+          ctx.lineTo(x+Math.cos(ang)*len, y+Math.sin(ang)*len);
+          ctx.stroke();
+        }
+        [[0,0],[texW,0],[0,texH],[texW,texH]].forEach(([cx,cy])=>{
+          const r = 20+Math.random()*16;
+          const g = ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+          g.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${cornerAlpha})`);
+          g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+        });
+      }
+
+      // ---- Color (albedo) ----
+      const cc = document.createElement('canvas');
+      cc.width = texW; cc.height = texH;
+      const cctx = cc.getContext('2d');
+      const baseGrad = cctx.createLinearGradient(0,0,0,texH);
+      baseGrad.addColorStop(0,   '#3c2a1c');
+      baseGrad.addColorStop(0.5, '#4b3324');
+      baseGrad.addColorStop(1,   '#392717');
+      cctx.fillStyle = baseGrad;
+      cctx.fillRect(0,0,texW,texH);
+      grainSeeds.forEach(g=>{
+        const shade = g.dark ? (18+Math.random()*26) : (150+Math.random()*70);
+        cctx.strokeStyle = g.dark
+          ? `rgba(${shade|0},${(shade*0.62)|0},${(shade*0.4)|0},${0.10+Math.random()*0.10})`
+          : `rgba(${shade|0},${(shade*0.78)|0},${(shade*0.55)|0},${0.05+Math.random()*0.07})`;
+        cctx.lineWidth = g.w;
+        cctx.beginPath();
+        for(let x=0;x<=texW;x+=8){
+          const y = g.y0 + Math.sin(x*g.freq + g.phase)*g.amp;
+          if(x===0) cctx.moveTo(x,y); else cctx.lineTo(x,y);
+        }
+        cctx.stroke();
+      });
+      // darker "cathedral" grain arcs for authentic walnut figure
+      for(let i=0;i<7;i++){
+        const cx = Math.random()*texW;
+        const cy = texH*0.5 + (Math.random()-0.5)*texH*0.7;
+        cctx.strokeStyle = `rgba(24,15,9,${0.05+Math.random()*0.08})`;
+        cctx.lineWidth = 1+Math.random()*2;
+        for(let k=0;k<4;k++){
+          cctx.beginPath();
+          cctx.ellipse(cx, cy, 90+k*14+Math.random()*40, texH*0.55+k*16, 0, 0, Math.PI*2);
+          cctx.stroke();
+        }
+      }
+      // fine pore/speckle grain noise for close-up realism
+      const speck = cctx.getImageData(0,0,texW,texH);
+      for(let p=0;p<speck.data.length;p+=4){
+        const n = (Math.random()-0.5)*14;
+        speck.data[p]   = Math.min(255,Math.max(0, speck.data[p]+n));
+        speck.data[p+1] = Math.min(255,Math.max(0, speck.data[p+1]+n*0.8));
+        speck.data[p+2] = Math.min(255,Math.max(0, speck.data[p+2]+n*0.6));
+      }
+      cctx.putImageData(speck,0,0);
+      paintEdgeWear(cctx, [222,198,164], 1, 0.16, 0.22, 0.24);
+      const colorMap = new THREE.CanvasTexture(cc);
+      colorMap.encoding = THREE.sRGBEncoding;
+
+      // ---- Roughness (matte satin base, worn patches read slightly smoother) ----
+      const rc = document.createElement('canvas');
+      rc.width = texW; rc.height = texH;
+      const rctx = rc.getContext('2d');
+      rctx.fillStyle = 'rgb(150,150,150)'; // ~0.59 base — a real, non-glossy matte finish
+      rctx.fillRect(0,0,texW,texH);
+      grainSeeds.forEach(g=>{
+        const v = 120+Math.random()*55;
+        rctx.strokeStyle = `rgba(${v|0},${v|0},${v|0},0.10)`;
+        rctx.lineWidth = g.w;
+        rctx.beginPath();
+        for(let x=0;x<=texW;x+=10){
+          const y = g.y0 + Math.sin(x*g.freq + g.phase)*g.amp;
+          if(x===0) rctx.moveTo(x,y); else rctx.lineTo(x,y);
+        }
+        rctx.stroke();
+      });
+      paintEdgeWear(rctx, [40,40,40], -1, 0.30, 0.34, 0.32); // darker => smoother, polished-by-contact edges
+      const roughnessMap = new THREE.CanvasTexture(rc);
+
+      // ---- Bump (grain relief + softly rounded, dinged edges) ----
+      const bc = document.createElement('canvas');
+      bc.width = texW; bc.height = texH;
+      const bctx = bc.getContext('2d');
+      bctx.fillStyle = 'rgb(128,128,128)';
+      bctx.fillRect(0,0,texW,texH);
+      grainSeeds.forEach(g=>{
+        const v = 128 + (g.dark? -1:1)*(14+Math.random()*22);
+        bctx.strokeStyle = `rgba(${v|0},${v|0},${v|0},0.35)`;
+        bctx.lineWidth = g.w*0.8;
+        bctx.beginPath();
+        for(let x=0;x<=texW;x+=10){
+          const y = g.y0 + Math.sin(x*g.freq + g.phase)*g.amp;
+          if(x===0) bctx.moveTo(x,y); else bctx.lineTo(x,y);
+        }
+        bctx.stroke();
+      });
+      paintEdgeWear(bctx, [90,90,90], -1, 0.22, 0.30, 0.28); // slight relief loss at worn edges/dings
+      const bumpMap = new THREE.CanvasTexture(bc);
+
+      [colorMap, roughnessMap, bumpMap].forEach(t=>{ t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; });
+      return { colorMap, roughnessMap, bumpMap };
+    }
+    const walnutDesk = makeWalnutDeskMaps(1536, 512);
+
+    const deskTopMat  = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: walnutDesk.colorMap,
+      roughness: 1.0,
+      roughnessMap: walnutDesk.roughnessMap,
+      bumpMap: walnutDesk.bumpMap,
+      bumpScale: 0.0012,
+      metalness: 0.02
+    });
+    const edgeTrimMat = new THREE.MeshStandardMaterial({ color: 0x241d15, roughness: 0.5, metalness: 0.06 });
+
+    // ----- Desk (standing-desk style, black top on a slim metal frame) -----
+    const deskW = 3.05, deskD = 1.0, deskTopY = 0.75, deskThick = 0.042;
+
+    const deskTop = new THREE.Mesh(new THREE.BoxGeometry(deskW, deskThick, deskD), deskTopMat);
+    deskTop.position.set(0, deskTopY, deskD/2);
+    deskTop.castShadow = true; deskTop.receiveShadow = true;
+    setup.add(deskTop);
+
+    // Thin contrasting edge trim around the desktop perimeter — the detail
+    // that reads as a real eased/laminate edge instead of a bare box corner.
+    const trimH = deskThick + 0.006, trimT = 0.012;
+    function edgeTrim(w,d,x,z){
+      const t = new THREE.Mesh(new THREE.BoxGeometry(w, trimH, d), edgeTrimMat);
+      t.position.set(x, deskTopY, z);
+      t.castShadow = true; t.receiveShadow = true;
+      setup.add(t);
+    }
+    edgeTrim(deskW + trimT*2, trimT, 0, -trimT/2);
+    edgeTrim(deskW + trimT*2, trimT, 0, deskD + trimT/2);
+    edgeTrim(trimT, deskD + trimT*2, -deskW/2 - trimT/2, deskD/2);
+    edgeTrim(trimT, deskD + trimT*2, deskW/2 + trimT/2, deskD/2);
+
+    // Shared leg-frame dimensions — used by makeLegFrame just below and by
+    // the Christmas light wrap further down, so both agree exactly on the
+    // legs' real position/radius/height.
+    const legR = 0.022;
+    const legH = deskTopY - deskThick/2;
+
+    function makeLegFrame(xSide){
+      const g = new THREE.Group();
+
+      const frontLeg = new THREE.Mesh(new THREE.CylinderGeometry(legR, legR, legH, 12), metalMat);
+      frontLeg.position.set(xSide, legH/2, deskD - 0.06);
+      frontLeg.castShadow = true;
+      g.add(frontLeg);
+
+      const backLeg = frontLeg.clone();
+      backLeg.position.set(xSide, legH/2, 0.06);
+      g.add(backLeg);
+
+      const stretcher = new THREE.Mesh(new THREE.CylinderGeometry(legR*0.8, legR*0.8, deskD-0.12, 10), metalMat);
+      stretcher.rotation.x = Math.PI/2;
+      stretcher.position.set(xSide, legH*0.22, deskD/2);
+      stretcher.castShadow = true;
+      g.add(stretcher);
+
+      [frontLeg, backLeg].forEach(leg=>{
+        const foot = new THREE.Mesh(new THREE.CylinderGeometry(legR*1.3, legR*1.3, 0.01, 10), jointMat);
+        foot.position.set(leg.position.x, 0.005, leg.position.z);
+        g.add(foot);
+      });
+      return g;
+    }
+    setup.add(makeLegFrame(-deskW/2 + 0.08));
+    setup.add(makeLegFrame(deskW/2 - 0.08));
+
+    // Soft contact shadows grounding each leg pair
+    [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
+      addContactShadow(setup, xSide, deskD - 0.06, 0.10, 0.09, 0.7);
+      addContactShadow(setup, xSide, 0.06, 0.10, 0.09, 0.7);
+    });
+
+    // ---------- Christmas string lights, wrapped around the desk legs ----------
+    // A small strand of red/green/warm-white bulbs, physically coiled around
+    // each leg pair's two vertical legs and the horizontal stretcher that
+    // joins them — following the frame's real shape (helix around each
+    // cylinder) rather than a straight line floating in space. Built once,
+    // always present in the scene (same approach as the Halloween leaves and
+    // Christmas snow above), but every bulb/glow/point-light starts at zero
+    // intensity/opacity and is only ever driven above zero by the render
+    // loop below, gated to currentTheme === "christmas" and faded by the
+    // same opacity the Christmas toggle already animates for the window
+    // photo — so the strand fades in/out with the toggle and is completely
+    // inert (and invisible) in every other theme.
+    //
+    // Every bulb of a given color shares one material (and every halo of a
+    // given color shares one sprite material), so lighting the whole strand
+    // up or down each frame is 6 material/light writes total, not one per
+    // bulb — the per-instance cost is just the (cheap, low-poly) meshes.
+    function makeBulbGlowTexture(){
+      const s = 64;
+      const c = document.createElement('canvas'); c.width = s; c.height = s;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+      grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(s/2, s/2, s/2, 0, Math.PI*2); ctx.fill();
+      return new THREE.CanvasTexture(c);
+    }
+    const bulbGlowTex = makeBulbGlowTexture();
+    const bulbCoreTex = makeXmasBulbCoreTexture();
+    const bulbCoreColors = [0xffcdbd, 0xc9ffd7, 0xfff2d4];
+    const bulbColors = [
+      { name: 'red',   color: 0xd6261b, emissive: 0xff2a1a },
+      { name: 'green', color: 0x1f7a34, emissive: 0x33ff5c },
+      { name: 'warm',  color: 0xe8c07a, emissive: 0xffdca0 }
+    ];
+    const bulbGeo = new THREE.SphereGeometry(0.0075, 6, 5);
+    const bulbMats = bulbColors.map(c => new THREE.MeshStandardMaterial({
+      color: c.color, emissive: c.emissive, emissiveIntensity: 0,
+      roughness: 0.35, metalness: 0.05,
+      transparent: true, opacity: 0, depthWrite: false
+    }));
+    const bulbGlowMats = bulbColors.map(c => new THREE.SpriteMaterial({
+      map: bulbGlowTex, color: c.emissive, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    const bulbCoreMats = bulbCoreColors.map(col => new THREE.SpriteMaterial({
+      map: bulbCoreTex, color: col, transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    deskChristmasLights = { bulbMats, bulbGlowMats, bulbCoreMats, pointLights: [] };
+
+    // Places one small bulb + matching soft halo sprite + tiny bright core
+    // sprite at each point along a pre-computed coil path, cycling
+    // red -> green -> warm-white so the strand reads as a continuous
+    // string rather than random scatter. `colorStart` lets successive
+    // segments (front leg -> stretcher -> back leg) continue the same
+    // color cycle instead of each resetting. Each bulb also gets a small,
+    // fixed (non-animated) brightness roll expressed as a size nudge
+    // across all three parts, so the coil doesn't read as identical clones.
+    function placeBulbsAlongPath(points, colorStart){
+      for(let i=0;i<points.length;i++){
+        const ci = (colorStart + i) % bulbColors.length;
+        const bright = xmasBulbBrightness();
+        const bulb = new THREE.Mesh(bulbGeo, bulbMats[ci]);
+        bulb.position.copy(points[i]);
+        bulb.scale.setScalar(0.85 + bright*0.2);
+        setup.add(bulb);
+        const glow = new THREE.Sprite(bulbGlowMats[ci]);
+        glow.scale.set(0.024*bright, 0.024*bright, 1);
+        glow.position.copy(points[i]);
+        setup.add(glow);
+        const core = new THREE.Sprite(bulbCoreMats[ci]);
+        core.scale.set(0.010*bright, 0.010*bright, 1);
+        core.position.copy(points[i]);
+        setup.add(core);
+      }
+      return points.length;
+    }
+
+    // A vertical helix wound around a leg cylinder, from just above the
+    // floor to just under the desktop's underside (leaving a gap so bulbs
+    // never poke through the desktop). Spacing along the helix is jittered
+    // slightly (endpoints pinned) so the winds don't land at perfectly
+    // even intervals, the way a hand-wrapped strand wouldn't.
+    function verticalWrapPoints(x, z, yStart, yEnd, turns, radius, count){
+      const pts = [];
+      const tArr = xmasJitteredT(count, 0.22);
+      for(let i=0;i<count;i++){
+        const tt = tArr[i];
+        const y = yStart + (yEnd - yStart) * tt;
+        const ang = tt * Math.PI * 2 * turns;
+        pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y, z + Math.sin(ang)*radius));
+      }
+      return pts;
+    }
+    // A horizontal helix wound around the stretcher bar joining the two legs.
+    function horizontalWrapPoints(x, y, zStart, zEnd, turns, radius, count){
+      const pts = [];
+      const tArr = xmasJitteredT(count, 0.22);
+      for(let i=0;i<count;i++){
+        const tt = tArr[i];
+        const z = zStart + (zEnd - zStart) * tt;
+        const ang = tt * Math.PI * 2 * turns;
+        pts.push(new THREE.Vector3(x + Math.cos(ang)*radius, y + Math.sin(ang)*radius, z));
+      }
+      return pts;
+    }
+
+    const wrapRadius = legR * 1.7;
+    const stretchWrapRadius = legR * 0.8 * 1.9;
+    const wrapYStart = 0.03;               // just above the floor
+    const wrapYEnd = legH - 0.05;          // just short of the desktop underside
+    [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
+      let colorIdx = 0;
+      const frontPts = verticalWrapPoints(xSide, deskD - 0.06, wrapYStart, wrapYEnd, 4, wrapRadius, 15);
+      colorIdx += placeBulbsAlongPath(frontPts, colorIdx);
+      const stretchPts = horizontalWrapPoints(xSide, legH*0.22, deskD - 0.10, 0.10, 3, stretchWrapRadius, 10);
+      colorIdx += placeBulbsAlongPath(stretchPts, colorIdx);
+      const backPts = verticalWrapPoints(xSide, 0.06, wrapYEnd, wrapYStart, 4, wrapRadius, 15);
+      colorIdx += placeBulbsAlongPath(backPts, colorIdx);
+    });
+
+    // Low, soft point lights (two per leg pair — one near the floor, one
+    // near the top of the coil, instead of just one) so the strand casts
+    // a little warm light onto the nearby legs and floor across more of
+    // its height, rather than only reading as glowing sprites. Short,
+    // physically-correct falloff distance keeps each pool a subtle, cozy
+    // wash rather than washing out the room.
+    [-deskW/2 + 0.08, deskW/2 - 0.08].forEach(xSide=>{
+      const plLow = new THREE.PointLight(0xffdca0, 0, 0.6, 2.0);
+      plLow.position.set(xSide, 0.14, deskD/2);
+      setup.add(plLow);
+      deskChristmasLights.pointLights.push(plLow);
+      const plHigh = new THREE.PointLight(0xffdca0, 0, 0.6, 2.0);
+      plHigh.position.set(xSide, wrapYEnd - 0.1, deskD - 0.06);
+      setup.add(plHigh);
+      deskChristmasLights.pointLights.push(plHigh);
+    });
+
+
+    // ----- Desk mat: soft-edged rectangle under the keyboard/mouse — the ----
+    // ----- small detail that instantly reads as "someone's real desk" ----
+    function roundedMatTexture(w,h,radius,color){
+      const res = 512;
+      const c = document.createElement('canvas');
+      c.width = res; c.height = Math.round(res*h/w);
+      const ctx = c.getContext('2d');
+      const rr = radius/w*res;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(rr,0);
+      ctx.arcTo(c.width,0,c.width,c.height,rr);
+      ctx.arcTo(c.width,c.height,0,c.height,rr);
+      ctx.arcTo(0,c.height,0,0,rr);
+      ctx.arcTo(0,0,c.width,0,rr);
+      ctx.closePath(); ctx.fill();
+      ctx.save();
+      ctx.clip();
+      const grad = ctx.createRadialGradient(c.width/2,c.height/2,0,c.width/2,c.height/2,c.width*0.6);
+      grad.addColorStop(0,'rgba(0,0,0,0)');
+      grad.addColorStop(1,'rgba(0,0,0,0.18)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0,0,c.width,c.height);
+      ctx.restore();
+      const tex = new THREE.CanvasTexture(c);
+      tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+    const matW = 0.86, matD = 0.42;
+    const deskMat = new THREE.Mesh(
+      new THREE.PlaneGeometry(matW, matD),
+      new THREE.MeshStandardMaterial({ map: roundedMatTexture(matW, matD, 0.05, '#33352f'), roughness: 0.92, transparent:true })
+    );
+    deskMat.rotation.x = -Math.PI/2;
+    deskMat.position.set(-0.05, deskTopY + deskThick/2 + 0.002, 0.62);
+    deskMat.receiveShadow = true;
+    setup.add(deskMat);
+
+    // ----- Keyboard: low-profile board with a suggested key grid -----
+    function keycapTexture(cols, rows, color, gap){
+      const cw = 48;
+      const c = document.createElement('canvas');
+      c.width = cols*cw; c.height = rows*cw;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = color; ctx.fillRect(0,0,c.width,c.height);
+      for(let r=0;r<rows;r++){
+        for(let col=0; col<cols; col++){
+          const x = col*cw + gap, y = r*cw + gap, s = cw - gap*2;
+          const grad = ctx.createLinearGradient(x,y,x,y+s);
+          grad.addColorStop(0, 'rgba(255,255,255,0.10)');
+          grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          if(ctx.roundRect){ ctx.roundRect(x,y,s,s,4); } else { ctx.rect(x,y,s,s); }
+          ctx.fill();
+        }
+      }
+      return new THREE.CanvasTexture(c);
+    }
+    const kbGroup = new THREE.Group();
+    kbGroup.position.set(-0.06, deskTopY + deskThick/2, 0.55);
+    kbGroup.rotation.x = -0.035; // slight forward tilt, like real fold-out feet
+    setup.add(kbGroup);
+
+    const kbW = 0.44, kbD = 0.15, kbH = 0.022;
+    const kbBase = new THREE.Mesh(new THREE.BoxGeometry(kbW, kbH, kbD), blackMat);
+    kbBase.position.y = kbH/2;
+    kbBase.castShadow = false; kbBase.receiveShadow = false;
+    kbGroup.add(kbBase);
+
+    const kbKeys = new THREE.Mesh(
+      new THREE.BoxGeometry(kbW-0.012, 0.006, kbD-0.012),
+      new THREE.MeshStandardMaterial({ map: keycapTexture(15,5,'#232326',3), roughness: 0.55, metalness: 0.05 })
+    );
+    kbKeys.position.y = kbH + 0.003;
+    kbGroup.add(kbKeys);
+
+    // ----- Mouse: simple ergonomic silhouette -----
+    const mouseGroup = new THREE.Group();
+    mouseGroup.position.set(kbGroup.position.x + kbW/2 + 0.075, deskTopY + deskThick/2, 0.56);
+    setup.add(mouseGroup);
+    const mouseBody = new THREE.Mesh(new THREE.SphereGeometry(0.032, 16, 12), blackMat);
+    mouseBody.scale.set(1, 0.62, 1.55);
+    mouseBody.position.y = 0.032*0.62;
+    mouseBody.castShadow = false;
+    mouseGroup.add(mouseBody);
+
+    addContactShadow(setup, kbGroup.position.x, kbGroup.position.z, kbW*0.75, kbD*0.9, 0.4);
+    addContactShadow(setup, mouseGroup.position.x, mouseGroup.position.z, 0.09, 0.09, 0.4);
+
+    // ----- Desk accessories: two tidy clusters flanking the keyboard, -----
+    // ----- kept off the mat so the "work surface" itself stays clear -----
+    {
+      const deskSurfY = deskTopY + deskThick/2;
+
+      const notebookCoverMat = new THREE.MeshStandardMaterial({ color: 0xc9bfa8, roughness: 0.85, metalness: 0.02 });
+      const notebookPageMat  = new THREE.MeshStandardMaterial({ color: 0xede6d3, roughness: 0.9,  metalness: 0.0  });
+      const penBodyMat       = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.35, metalness: 0.55 });
+      const penTipMat        = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.3,  metalness: 0.9  }); // brand gold
+      const deskMugMat       = new THREE.MeshStandardMaterial({ color: 0x211f1b, roughness: 0.4,  metalness: 0.06 });
+      const deskMugInMat     = new THREE.MeshStandardMaterial({ color: 0x3d2a1c, roughness: 0.55, metalness: 0.02 });
+      const airpodsCaseMat   = new THREE.MeshStandardMaterial({ color: 0xf4f2ec, roughness: 0.28, metalness: 0.04 });
+      const airpodsSeamMat   = new THREE.MeshStandardMaterial({ color: 0xcfcbc0, roughness: 0.4,  metalness: 0.1  });
+      const phoneBodyMat     = new THREE.MeshStandardMaterial({ color: 0x121214, roughness: 0.3,  metalness: 0.5  });
+      const phoneScreenMat   = new THREE.MeshStandardMaterial({ color: 0x08090a, roughness: 0.15, metalness: 0.2  });
+
+      // -- notebook: kraft cover, visible page edges, a pen resting on top --
+      function addNotebook(parent, x, z, rotY){
+        const g = new THREE.Group();
+        const w = 0.145, h = 0.014, d = 0.20;
+        const pages = new THREE.Mesh(new THREE.BoxGeometry(w - 0.004, h - 0.004, d - 0.004), notebookPageMat);
+        pages.position.y = h/2;
+        pages.castShadow = false; pages.receiveShadow = false;
+        g.add(pages);
+        const cover = new THREE.Mesh(new THREE.BoxGeometry(w, h*0.35, d), notebookCoverMat);
+        cover.position.y = h - (h*0.35)/2;
+        cover.castShadow = false; cover.receiveShadow = false;
+        g.add(cover);
+        g.position.set(x, deskSurfY, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+        return { top: deskSurfY + h, group: g };
+      }
+
+      // -- pen: slim body with a gold clip/tip, resting diagonally --
+      function addPen(parent, x, z, y, rotY, rotZ){
+        const g = new THREE.Group();
+        const len = 0.135, r = 0.0045;
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len*0.82, 10), penBodyMat);
+        body.rotation.z = Math.PI/2;
+        body.position.x = -len*0.09;
+        body.castShadow = false;
+        g.add(body);
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(r*0.95, len*0.18, 10), penTipMat);
+        tip.rotation.z = -Math.PI/2;
+        tip.position.x = len*0.41;
+        g.add(tip);
+        const clip = new THREE.Mesh(new THREE.BoxGeometry(len*0.28, 0.0035, 0.006), penTipMat);
+        clip.position.set(-len*0.18, r + 0.0015, 0);
+        g.add(clip);
+        g.position.set(x, y + r, z);
+        g.rotation.y = rotY || 0;
+        g.rotation.z = rotZ || 0;
+        parent.add(g);
+      }
+
+      // -- coffee mug: dark ceramic body, warm interior, small handle --
+      function addDeskMug(parent, x, z){
+        const g = new THREE.Group();
+        const r = 0.032, h = 0.075;
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.9, h, 22), deskMugMat);
+        body.position.y = h/2;
+        body.castShadow = false; body.receiveShadow = false;
+        g.add(body);
+        const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(r*0.83, r*0.83, 0.004, 22), deskMugInMat);
+        rimIn.position.y = h - 0.002;
+        g.add(rimIn);
+        const handle = new THREE.Mesh(new THREE.TorusGeometry(0.021, 0.0055, 8, 16, Math.PI*1.3), deskMugMat);
+        handle.rotation.z = Math.PI/2;
+        handle.position.set(r + 0.008, h/2, 0);
+        handle.castShadow = false;
+        g.add(handle);
+        g.position.set(x, deskSurfY, z);
+        parent.add(g);
+        addContactShadow(parent, x, z, r*1.5, r*1.5, 0.5);
+      }
+
+      // -- AirPods case: rounded pill (scaled sphere, r128-safe — no ----
+      // -- CapsuleGeometry) with a hinge seam and tiny LED --
+      function addAirpodsCase(parent, x, z, rotY){
+        const g = new THREE.Group();
+        const r = 0.02;
+        const base = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), airpodsCaseMat);
+        base.scale.set(1.4, 0.62, 1.0);
+        base.position.y = r*0.62;
+        base.castShadow = false; base.receiveShadow = false;
+        g.add(base);
+        const topY = r*0.62*2;
+        const seam = new THREE.Mesh(new THREE.BoxGeometry(r*2*1.36, 0.0015, r*1.98), airpodsSeamMat);
+        seam.position.y = topY - 0.003;
+        g.add(seam);
+        const led = new THREE.Mesh(new THREE.CircleGeometry(0.0025, 8), new THREE.MeshStandardMaterial({ color: 0x3d3128, roughness: 0.3 }));
+        led.rotation.x = -Math.PI/2;
+        led.position.set(r*0.9, topY - 0.0025, 0);
+        g.add(led);
+        g.position.set(x, deskSurfY, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+        addContactShadow(parent, x, z, 0.045, 0.032, 0.45);
+      }
+
+      // -- small deck of cards: Wildcard-branded box lid, subtle brand nod --
+      function cardBoxTexture(){
+        const res = 256;
+        const c = document.createElement('canvas');
+        c.width = res; c.height = Math.round(res*1.4);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#16140f';
+        ctx.fillRect(0,0,c.width,c.height);
+        ctx.strokeStyle = '#c9a227';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(10,10,c.width-20,c.height-20);
+        ctx.fillStyle = '#eb181d';
+        const cx = c.width/2, cy = c.height/2, s = 22;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy-s); ctx.lineTo(cx+s*0.72, cy); ctx.lineTo(cx, cy+s); ctx.lineTo(cx-s*0.72, cy);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('W', cx, cy + 7);
+        const tex = new THREE.CanvasTexture(c);
+        tex.encoding = THREE.sRGBEncoding;
+        return tex;
+      }
+      function addCardDeck(parent, x, z, rotY){
+        const g = new THREE.Group();
+        const w = 0.064, h = 0.022, d = 0.089;
+        const boxMat = new THREE.MeshStandardMaterial({ color: 0x16140f, roughness: 0.4, metalness: 0.05 });
+        const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat);
+        box.position.y = h/2;
+        box.castShadow = false; box.receiveShadow = false;
+        g.add(box);
+        const lid = new THREE.Mesh(
+          new THREE.PlaneGeometry(w*0.9, d*0.9),
+          new THREE.MeshStandardMaterial({ map: cardBoxTexture(), roughness: 0.4, metalness: 0.06 })
+        );
+        lid.rotation.x = -Math.PI/2;
+        lid.position.y = h + 0.0005;
+        g.add(lid);
+        // a single loose card, slid slightly out
+        const looseCard = new THREE.Mesh(new THREE.BoxGeometry(w*0.92, 0.0015, d*0.9), new THREE.MeshStandardMaterial({ color: 0xf4efe2, roughness: 0.55 }));
+        looseCard.position.set(0.006, h + 0.0012, d*0.06);
+        looseCard.rotation.y = 0.05;
+        looseCard.castShadow = false;
+        g.add(looseCard);
+        g.position.set(x, deskSurfY, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+        addContactShadow(parent, x, z, w*0.9, d*0.7, 0.5);
+      }
+
+      // -- phone: slim rounded slab, resting screen-up, subtle camera bump --
+      function addPhone(parent, x, z, rotY){
+        const g = new THREE.Group();
+        const w = 0.075, h = 0.008, d = 0.155;
+        const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), phoneBodyMat);
+        body.position.y = h/2;
+        body.castShadow = false; body.receiveShadow = false;
+        g.add(body);
+        const screen = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.006, d - 0.006), phoneScreenMat);
+        screen.rotation.x = -Math.PI/2;
+        screen.position.y = h + 0.0004;
+        g.add(screen);
+        g.position.set(x, deskSurfY, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+        addContactShadow(parent, x, z, w*0.9, d*0.55, 0.4);
+      }
+
+      // -- placement: left cluster (notebook + pen + mug), right cluster --
+      // -- (AirPods + card deck + phone) — clear of the mat and monitors --
+      const nb = addNotebook(setup, -1.02, 0.72, -0.09);
+      addPen(setup, -1.00, 0.69, nb.top, 0.5, 0.18);
+      addDeskMug(setup, -0.74, 0.87);
+
+      addAirpodsCase(setup, 0.40, 0.90, 0.12);
+      addCardDeck(setup, 0.78, 0.80, -0.18);
+      addPhone(setup, 0.98, 0.90, 0.10);
+    }
+
+    // ----- Modern smartphone: a distinct, premium centerpiece resting -----
+    // ----- screen-up just in front of the keyboard, clear of the mat and -----
+    // ----- both desk clusters — a quiet secondary focal point of its own. -----
+    {
+      const phoneW = 0.076, phoneD = 0.158, phoneH = 0.0072;
+      const phoneSurfY = deskTopY + deskThick/2;
+
+      // Record the actual screen-plane size (matches the PlaneGeometry
+      // below) so the mobile Enter dive can compute exactly how close the
+      // camera needs to get for the phone's screen to fill the frame.
+      phoneScreenW = phoneW - 0.006;
+      phoneScreenD = phoneD - 0.006;
+
+      // Slim aluminum-and-glass frame — brushed metal with a light clearcoat
+      // so it catches highlights the same way the monitor bezels and the
+      // coffee table's legs do elsewhere in the room.
+      const phoneFrameMat = new THREE.MeshPhysicalMaterial({
+        color: 0x1b1c1f, roughness: 0.32, metalness: 0.72,
+        clearcoat: 0.5, clearcoatRoughness: 0.22
+      });
+      const phoneTrimMat = new THREE.MeshPhysicalMaterial({
+        color: 0x4a4c50, roughness: 0.22, metalness: 0.85,
+        clearcoat: 0.6, clearcoatRoughness: 0.15
+      });
+
+      // Screen image: the actual product-page screenshot supplied for the
+      // phone, loaded the same way the three monitor screens load their
+      // artwork (embedded data URI -> THREE.TextureLoader) so it behaves
+      // identically under the room's lighting.
+      const phoneScreenImageData = 'images/image_019.webp';
+      function phoneScreenTexture(){
+        const tex = textureLoader.load(phoneScreenImageData);
+        tex.encoding = THREE.sRGBEncoding;
+        tex.colorSpace = THREE.SRGBColorSpace || tex.colorSpace;
+        tex.anisotropy = 8;
+        return tex;
+      }
+      const phoneScreenMat = new THREE.MeshPhysicalMaterial({
+        map: phoneScreenTexture(),
+        roughness: 0.14, metalness: 0.05,
+        clearcoat: 0.85, clearcoatRoughness: 0.06
+      });
+
+      // Soft additive glow over the screen — same technique as the monitors'
+      // "on" wash — registered with the room's existing screenGlowRefs array
+      // so it breathes and brightens on hover exactly like every other
+      // screen in the room, with no changes to that existing system.
+      function phoneGlowTexture(){
+        const c = document.createElement('canvas'); c.width=c.height=128;
+        const ctx = c.getContext('2d');
+        const grad = ctx.createRadialGradient(64,64,0,64,64,64);
+        grad.addColorStop(0,'rgba(255,214,158,0.22)');
+        grad.addColorStop(1,'rgba(255,214,158,0)');
+        ctx.fillStyle=grad; ctx.fillRect(0,0,128,128);
+        return new THREE.CanvasTexture(c);
+      }
+      const phoneGlowMat = new THREE.MeshBasicMaterial({
+        map: phoneGlowTexture(), transparent:true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite:false
+      });
+
+      const phoneGroup = new THREE.Group();
+      const phoneX = 0.10, phoneZ = 0.895, phoneRotY = -0.13;
+      phoneGroup.position.set(phoneX, phoneSurfY, phoneZ);
+      phoneGroup.rotation.y = phoneRotY;
+      setup.add(phoneGroup);
+
+      const phoneBody = new THREE.Mesh(new THREE.BoxGeometry(phoneW, phoneH, phoneD), phoneFrameMat);
+      phoneBody.position.y = phoneH/2;
+      phoneBody.castShadow = false; phoneBody.receiveShadow = false;
+      phoneGroup.add(phoneBody);
+
+      // Thin bright edge band, inset from the frame's outline — the same
+      // "contrasting edge trim" trick used on the desktop perimeter — reads
+      // as a polished chamfer catching the room's light.
+      const phoneTrim = new THREE.Mesh(new THREE.BoxGeometry(phoneW + 0.0015, phoneH*0.55, phoneD + 0.0015), phoneTrimMat);
+      phoneTrim.position.y = phoneH*0.28;
+      phoneGroup.add(phoneTrim);
+
+      const phoneScreen = new THREE.Mesh(new THREE.PlaneGeometry(phoneW - 0.006, phoneD - 0.006), phoneScreenMat);
+      phoneScreen.rotation.x = -Math.PI/2;
+      phoneScreen.position.y = phoneH + 0.0004;
+      phoneGroup.add(phoneScreen);
+      modernPhoneScreenMesh = phoneScreen;
+
+      const phoneGlow = new THREE.Mesh(new THREE.PlaneGeometry(phoneW - 0.006, phoneD - 0.006), phoneGlowMat);
+      phoneGlow.rotation.x = -Math.PI/2;
+      phoneGlow.position.y = phoneH + 0.0006;
+      phoneGroup.add(phoneGlow);
+      screenGlowRefs.push({ glowMat: phoneGlowMat, baseGlowOpacity: 0.35 });
+
+      // A faint warm point light seated just above the screen — enough to
+      // pool a soft glow on the desk around it without competing with the
+      // monitors or the coffee table hologram, so it reads as an active
+      // device rather than a static prop.
+      const phoneLight = new THREE.PointLight(0xffd8a0, 0.16, 0.32, 2);
+      phoneLight.position.set(phoneX, phoneSurfY + 0.05, phoneZ);
+      // setup.add(phoneLight); // disabled for performance: negligible contribution
+
+      addContactShadow(setup, phoneX, phoneZ, phoneW*0.95, phoneD*0.62, 0.4);
+
+      modernPhoneGroup = phoneGroup;
+    }
+
+    // ----- Wall-mounted TV, centered above the desk -----
+    const tvW = 2.35, tvH = 1.35, tvY = 2.42;
+
+    function purpleGlowTexture(){
+      const c = document.createElement('canvas'); c.width=c.height=256;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+      grad.addColorStop(0,   'rgba(76,29,149,0.62)');
+      grad.addColorStop(0.45,'rgba(49,19,97,0.32)');
+      grad.addColorStop(1,   'rgba(49,19,97,0)');
+      ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+      return new THREE.CanvasTexture(c);
+    }
+    purpleGlowTex = purpleGlowTexture();
+
+    // Halloween counterpart: same soft radial falloff, swapped to a warm
+    // pumpkin-orange so the TV/monitor LED backlight strips can switch over
+    // when Halloween mode is toggled (see the dedicated toggle script near
+    // the end of the file), while every other light in the room is untouched.
+    function orangeGlowTexture(){
+      const c = document.createElement('canvas'); c.width=c.height=256;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(128,128,0,128,128,128);
+      grad.addColorStop(0,   'rgba(255,140,26,0.55)');
+      grad.addColorStop(0.45,'rgba(255,106,0,0.28)');
+      grad.addColorStop(1,   'rgba(255,106,0,0)');
+      ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+      return new THREE.CanvasTexture(c);
+    }
+    orangeGlowTex = orangeGlowTexture();
+
+    // Bias-lighting LED strip glow: a soft purple halo bloomed onto the wall
+    // from just behind the panel, plus a low, non-shadow-casting point light
+    // so nearby surfaces pick up a faint purple tint too.
+    function addLedBacklight(parent, w, h, x, y, z, intensity, dist){
+      // Resting brightness dialed up (3.4x) for the dark-room look so the
+      // LED strips read as a clear, punchy light source against the now
+      // slightly dimmer ambient room lighting, while the hover boost
+      // applied later in the render loop still reads as a noticeable jump
+      // on top of that.
+      // Reach is extended so the wash carries out onto the surrounding wall,
+      // the desk surface, and the floor, while a gentle decay (rather than a
+      // tight falloff) keeps the wash soft and diffused instead of a harsh,
+      // neon-edged glow.
+      // Nudged from 3.4x to 3.8x so the purple bias-light reads as a
+      // brighter, more clearly-defined highlight against the now-deeper
+      // room shadows, without changing its reach.
+      const boostedIntensity = intensity * 5.2;
+      const boostedDist = dist * 3.2;
+
+      const glow = new THREE.Mesh(
+        new THREE.PlaneGeometry(w * 1.15, h * 1.15),
+        new THREE.MeshBasicMaterial({ map: purpleGlowTex, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
+      glow.position.set(x, y, z);
+      parent.add(glow);
+
+      // Primary soft wash: sits just off the wall behind the panel. Decay
+      // dropped further (1.15) so the wash carries much further across the
+      // wall/ceiling before fading, giving a stronger visible color bounce
+      // through the room rather than staying a tight halo around the panel.
+      const led = new THREE.PointLight(0x2e0854, boostedIntensity, boostedDist, 1.15);
+      led.position.set(x, y, z + 0.01);
+      led.castShadow = false;
+      parent.add(led);
+
+      // Secondary low, forward-and-downward spill so the glow realistically
+      // reaches the desk surface and floor in front of the panel, not just
+      // the wall directly behind it. Boosted and given a wider reach so the
+      // purple bounce reads clearly on the desk, floor, and nearby walls.
+      const spill = new THREE.PointLight(0x2e0854, boostedIntensity * 0.65, boostedDist * 1.5, 1.6);
+      spill.position.set(x, y - h * 0.6, z + 0.5);
+      spill.castShadow = false;
+      parent.add(spill);
+
+      // Record base values so the hover glow boost (applied every frame in
+      // the render loop) always scales up from the same resting point
+      // rather than compounding.
+      const ref = {
+        glowMat: glow.material, baseGlowOpacity: glow.material.opacity,
+        led, baseLedIntensity: boostedIntensity, baseLedDistance: led.distance,
+        spill, baseSpillIntensity: boostedIntensity * 0.45, baseSpillDistance: spill.distance
+      };
+      screenGlowRefs.push(ref);
+      return ref;
+    }
+
+    const tvFrame = new THREE.Mesh(new THREE.BoxGeometry(tvW, tvH, 0.035), blackMat);
+    tvFrame.position.set(0, tvY, 0.02);
+    tvFrame.castShadow = true;
+    setup.add(tvFrame);
+    tvClickMeshes.push(tvFrame);
+
+    tvGlowRef = addLedBacklight(setup, tvW + 0.6, tvH + 0.42, 0, tvY, -0.035, 0.55, 2.0);
+
+    // -- TV display: user-provided MP4, autoplaying/looping/muted, cropped
+    //    (not stretched) to fill the panel exactly like CSS object-fit:cover --
+    const tvVideoEl = document.getElementById('tvVideo');
+    if (tvVideoEl.readyState >= 2) {
+      tvVideoReady = true;
+    } else {
+      tvVideoEl.addEventListener('loadeddata', function(){ tvVideoReady = true; }, { once: true });
+    }
+    const tvVideoTexture = new THREE.VideoTexture(tvVideoEl);
+    tvVideoTexture.minFilter = THREE.LinearFilter;
+    tvVideoTexture.magFilter = THREE.LinearFilter;
+    tvVideoTexture.format = THREE.RGBFormat;
+    if (THREE.sRGBEncoding !== undefined) tvVideoTexture.encoding = THREE.sRGBEncoding;
+
+    (function fitTvVideoCover(video, texture, planeW, planeH){
+      function update(){
+        if (!video.videoWidth || !video.videoHeight) return;
+        const videoAspect = video.videoWidth / video.videoHeight;
+        const planeAspect = planeW / planeH;
+        if (videoAspect > planeAspect) {
+          const scale = planeAspect / videoAspect;
+          texture.repeat.set(scale, 1);
+          texture.offset.set((1 - scale) / 2, 0);
+        } else {
+          const scale = videoAspect / planeAspect;
+          texture.repeat.set(1, scale);
+          texture.offset.set(0, (1 - scale) / 2);
+        }
+      }
+      video.addEventListener('loadedmetadata', update);
+      if (video.readyState >= 1) update();
+    })(tvVideoEl, tvVideoTexture, tvW-0.045, tvH-0.045);
+
+    // Starts fully transparent (screen reads as off, showing the dark frame
+    // behind it) and paused. The coffee-table remote "turns on" the TV
+    // automatically on page load — that's when the render loop fades the
+    // screen in and the video + its sound both start together.
+    const tvVideoMat = new THREE.MeshBasicMaterial({ map: tvVideoTexture, transparent: true, opacity: 0 });
+    tvVideoMatRef = tvVideoMat;
+
+    const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(tvW-0.045, tvH-0.045), tvVideoMat);
+    tvScreen.position.set(0, tvY, 0.02 + 0.018);
+    setup.add(tvScreen);
+    tvClickMeshes.push(tvScreen);
+
+    // -- Power-on energy pulse (sits just in front of tvScreen) --
+    // A full-panel additive "bloom" wash that expands and settles, plus a
+    // narrower, brighter bar that sweeps left-to-right across it — reads as
+    // a sharp jolt of light snapping across the display an instant before
+    // the video's first frame is revealed underneath. Both start fully
+    // transparent and are driven each frame by updateRemoteAndTV, entirely
+    // within TV_FLASH_DUR (well under 0.3s) of the power button landing.
+    tvFlashWashMat = new THREE.MeshBasicMaterial({
+      color: 0xdcefff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const tvFlashWash = new THREE.Mesh(new THREE.PlaneGeometry(tvW-0.045, tvH-0.045), tvFlashWashMat);
+    tvFlashWash.position.set(0, tvY, 0.02 + 0.019);
+    setup.add(tvFlashWash);
+
+    const tvFlashBarTex = (function(){
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 8;
+      const cx = c.getContext('2d');
+      const grad = cx.createLinearGradient(0, 0, c.width, 0);
+      grad.addColorStop(0.00, 'rgba(240,248,255,0)');
+      grad.addColorStop(0.42, 'rgba(240,248,255,0.55)');
+      grad.addColorStop(0.50, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.58, 'rgba(240,248,255,0.55)');
+      grad.addColorStop(1.00, 'rgba(240,248,255,0)');
+      cx.fillStyle = grad;
+      cx.fillRect(0, 0, c.width, c.height);
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      return tex;
+    })();
+    tvFlashBarMat = new THREE.MeshBasicMaterial({
+      map: tvFlashBarTex, color: 0xffffff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    tvFlashBarHalfRange = (tvW - 0.045) * 0.55; // slight overshoot so the soft-edged bar fully clears both sides
+    const tvFlashBarWidth = (tvW - 0.045) * 0.34;
+    tvFlashBarMesh = new THREE.Mesh(new THREE.PlaneGeometry(tvFlashBarWidth, tvH-0.045), tvFlashBarMat);
+    tvFlashBarMesh.position.set(-tvFlashBarHalfRange, tvY, 0.02 + 0.020);
+    setup.add(tvFlashBarMesh);
+
+    const bgMusicEl = document.getElementById('bgMusic');
+
+    // Some browsers block a play() call that isn't tied to a user gesture;
+    // if that happens, quietly resume the moment the visitor does *anything*
+    // on the page (move the mouse, scroll, press a key, touch/click) rather
+    // than waiting specifically for a tap on the screen, and rather than
+    // leaving the TV/sound silent for the rest of the visit.
+    function playWithGestureFallback(mediaEl){
+      const p = mediaEl.play();
+      if (p && p.catch) {
+        p.catch(function(){
+          const resumeOnGesture = function(){
+            mediaEl.play().catch(function(){});
+            window.removeEventListener('click', resumeOnGesture);
+            window.removeEventListener('touchstart', resumeOnGesture);
+            window.removeEventListener('keydown', resumeOnGesture);
+            window.removeEventListener('mousemove', resumeOnGesture);
+            window.removeEventListener('wheel', resumeOnGesture);
+            window.removeEventListener('pointerdown', resumeOnGesture);
+          };
+          window.addEventListener('click', resumeOnGesture, { once: true });
+          window.addEventListener('touchstart', resumeOnGesture, { once: true });
+          window.addEventListener('keydown', resumeOnGesture, { once: true });
+          window.addEventListener('mousemove', resumeOnGesture, { once: true, passive: true });
+          window.addEventListener('wheel', resumeOnGesture, { once: true, passive: true });
+          window.addEventListener('pointerdown', resumeOnGesture, { once: true });
+        });
+      }
+    }
+
+    // Called the moment the remote's on-screen "press" lands (automatically,
+    // on page load). Fades the screen in and starts the muted TV video and
+    // its accompanying sound track together.
+    // The MP4 is only attached/fetched once the first scene frame has been
+    // rendered (see the animate() kick-off), so it never competes with the
+    // initial Three.js startup. Idempotent; turnOnTV also calls it as a
+    // safety net so activation behaves exactly as before.
+    function startTvVideoLoad(){
+      if(tvVideoEl.getAttribute('src')) return;
+      const src = tvVideoEl.getAttribute('data-src');
+      if(!src) return;
+      tvVideoEl.preload = 'auto';
+      tvVideoEl.src = src;
+      tvVideoEl.load();
+    }
+    window.__startTvVideoLoad = startTvVideoLoad;
+
+    function turnOnTV(t){
+      if(tvPoweredOn) return;
+      tvPoweredOn = true;
+      tvPowerOnStartTime = t;
+      startTvVideoLoad();
+      playWithGestureFallback(tvVideoEl);
+      if(bgMusicEl) playWithGestureFallback(bgMusicEl);
+    }
+
+    // Called when the visitor presses Enter: cuts the TV video and its
+    // sound immediately, ahead of whatever "load into the site" transition
+    // plays next (that transition itself is a placeholder for now — see
+    // startEnterSequence below).
+    function turnOffTV(){
+      tvPoweredOn = false;
+      tvVideoEl.pause();
+      if(bgMusicEl) bgMusicEl.pause();
+      if(tvVideoMatRef) tvVideoMatRef.opacity = 0;
+    }
+    window.turnOffTV = turnOffTV;
+
+    const tvMount = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.16), metalMat);
+    tvMount.position.set(0, tvY, -0.09);
+    setup.add(tvMount);
+
+    // ----- Triple monitor array, each on its own articulated desk-clamp arm -----
+    const monW = 0.92, monH = 0.53, monY = 1.30, monZ = 0.18;
+    const monGap = monW - 0.005; // bezels touch, tiny epsilon to avoid z-fighting
+    const bezelInset = 0.05;     // visible bezel border — thin, modern, not edge-to-edge
+
+    function makeMonitorArm(g, localX){
+      const clampZ = -0.08;
+      const clampTop = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.018, 0.09), jointMat);
+      clampTop.position.set(localX, deskTopY - monY + 0.009, clampZ);
+      clampTop.castShadow = false;
+      g.add(clampTop);
+      const clampBody = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.06), jointMat);
+      clampBody.position.set(localX, deskTopY - monY - 0.03, clampZ - 0.02);
+      clampBody.castShadow = false;
+      g.add(clampBody);
+
+      const riserBaseY = deskTopY - monY + 0.02;
+      const riserTopY  = -0.06;
+      const riser = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, riserTopY - riserBaseY, 12), metalMat);
+      riser.position.set(localX, (riserBaseY+riserTopY)/2, clampZ);
+      riser.castShadow = false;
+      g.add(riser);
+
+      const jointA = new THREE.Mesh(new THREE.SphereGeometry(0.024, 12, 10), jointMat);
+      jointA.position.set(localX, riserTopY, clampZ);
+      g.add(jointA);
+
+      const attachPoint = new THREE.Vector3(localX, 0, -0.017);
+      const armStart = new THREE.Vector3(localX, riserTopY, clampZ);
+      const armLen = armStart.distanceTo(attachPoint);
+      const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.017, armLen, 12), metalMat);
+      forearm.position.copy(armStart).lerp(attachPoint, 0.5);
+      forearm.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0,1,0),
+        attachPoint.clone().sub(armStart).normalize()
+      );
+      forearm.castShadow = true;
+      g.add(forearm);
+
+      const jointB = new THREE.Mesh(new THREE.SphereGeometry(0.02, 12, 10), jointMat);
+      jointB.position.copy(attachPoint);
+      g.add(jointB);
+
+      const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.10, 0.012), jointMat);
+      bracket.position.set(localX, 0, -0.022);
+      g.add(bracket);
+    }
+
+    function screenGlowTexture(){
+      const c = document.createElement('canvas'); c.width=c.height=128;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(64,64,0,64,64,64);
+      grad.addColorStop(0,'rgba(160,190,210,0.16)');
+      grad.addColorStop(1,'rgba(160,190,210,0)');
+      ctx.fillStyle=grad; ctx.fillRect(0,0,128,128);
+      return new THREE.CanvasTexture(c);
+    }
+    const glowTex = screenGlowTexture();
+
+    function makeMonitor(xOff, angle, screenImageMat){
+      const g = new THREE.Group();
+      // Pivot from the inner edge (not center) so angling in doesn't shift
+      // the monitor's effective position — keeps left/right spacing matched.
+      const innerEdgeX = xOff - Math.sign(xOff) * (monW/2);
+      g.position.set(innerEdgeX, monY, monZ);
+      g.rotation.y = angle;
+      const sx = Math.sign(xOff) * (monW/2);
+
+      const body = new THREE.Mesh(new THREE.BoxGeometry(monW, monH, 0.028), bezelMat);
+      body.position.x = sx;
+      body.castShadow = true;
+      g.add(body);
+
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(monW - bezelInset, monH - bezelInset), screenImageMat || screenMat);
+      screen.position.set(sx, 0, 0.015);
+      g.add(screen);
+
+      // Faint inner screen glow so it reads as "on" rather than a dead panel.
+      // toneMapped:false + a slightly higher base opacity keeps this glow
+      // (and the screen it sits on) looking bright even when the room's
+      // exposure drops for night mode.
+      const screenGlowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent:true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite:false, toneMapped:false });
+      const screenGlow = new THREE.Mesh(
+        new THREE.PlaneGeometry(monW - bezelInset, monH - bezelInset),
+        screenGlowMat
+      );
+      screenGlow.position.set(sx, 0, 0.0155);
+      g.add(screenGlow);
+      screenGlowRefs.push({ glowMat: screenGlowMat, baseGlowOpacity: 0.85 });
+
+      // Purple LED backlight strip, glowing out from behind the panel
+      addLedBacklight(g, monW + 0.16, monH + 0.14, sx, 0, -0.02, 0.35, 1.1);
+
+      // Tiny webcam dot on the top bezel
+      const cam = new THREE.Mesh(new THREE.CircleGeometry(0.0035, 10), new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.3 }));
+      cam.position.set(sx, monH/2 - bezelInset*0.4, 0.0148);
+      g.add(cam);
+
+      // Slim cosmetic neck where the arm bracket meets the panel
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), jointMat);
+      neck.position.set(sx, -monH/2 - 0.01, -0.02);
+      g.add(neck);
+
+      makeMonitorArm(g, sx);
+      return g;
+    }
+    const monLeft   = makeMonitor(-monGap, 0.22, makeScreenMaterial(monitorImageData[0]));
+    centerScreenMat = makeScreenMaterial(monitorImageData[1]);
+    const monCenter = makeMonitor(0, 0, centerScreenMat);
+    // makeMonitor just pushed this monitor's glow-overlay material onto
+    // screenGlowRefs as the most recent entry — grab it directly so the
+    // Enter transition can brighten precisely the center screen's glow,
+    // not the left/right ones.
+    centerScreenGlowMat = screenGlowRefs[screenGlowRefs.length - 1].glowMat;
+    const monRight  = makeMonitor(monGap, -0.22, makeScreenMaterial(monitorImageData[2]));
+    setup.add(monLeft, monCenter, monRight);
+    centerMonitorGroup = monCenter;
+
+    // ---------- Monitor floor spill: soft cool light landing on the bare ----------
+    // ---------- hardwood between the desk and the chair, one elongated pool ----------
+    // ---------- under each screen so the array reads as an actual light ----------
+    // ---------- source in the room — the floor counterpart to the LED wall ----------
+    // ---------- wash above, and echoing the window's sunbeam treatment but ----------
+    // ---------- shorter, cooler, and anchored to the screens instead of daylight. ----------
+    {
+      const floorGlowY = 0.006; // just proud of the bare hardwood
+      [ -monGap, 0, monGap ].forEach((mx, i) => {
+        const mat = new THREE.MeshBasicMaterial({
+          map: glowTex, color: 0xbfe0ff, transparent: true,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+          opacity: i === 1 ? 0.5 : 0.36
+        });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(monW * 0.85, 1.0), mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(mx, floorGlowY, monZ + 0.55);
+        setup.add(mesh);
+        screenGlowRefs.push({ glowMat: mat, baseGlowOpacity: mat.opacity });
+      });
+    }
+
+    // ----- Cable management: grommet, fabric sleeve, tray, and soft sag ----
+    const cableMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.85 });
+    const grommetX = deskW/2 - 0.35;
+    const grommetZ = 0.15;
+    const grommet = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.006, 8, 20), jointMat);
+    grommet.rotation.x = Math.PI/2;
+    grommet.position.set(grommetX, deskTopY + deskThick/2 + 0.001, grommetZ);
+    setup.add(grommet);
+
+    const sleeveH = deskTopY - 0.05;
+    const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, sleeveH, 10), new THREE.MeshStandardMaterial({ color: 0x2c2c2e, roughness: 0.95 }));
+    sleeve.position.set(grommetX, sleeveH/2 + 0.03, grommetZ - 0.03);
+    sleeve.castShadow = false;
+    setup.add(sleeve);
+
+    const tray = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.075, 0.05, 16, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.7, metalness: 0.2, side: THREE.DoubleSide })
+    );
+    tray.position.set(grommetX, deskTopY - 0.14, grommetZ - 0.03);
+    tray.castShadow = false;
+    setup.add(tray);
+
+    // Soft drooping cables from each monitor's clamp down into the grommet
+    [-monGap, 0, monGap].forEach((xOff)=>{
+      const sign = Math.sign(xOff) || 1;
+      const innerEdgeX = xOff - sign * (monW/2);
+      const startX = xOff===0 ? innerEdgeX : innerEdgeX + sign*(monW/2);
+      const start = new THREE.Vector3(startX, deskTopY + 0.03, monZ - 0.10);
+      const mid   = new THREE.Vector3((startX+grommetX)/2, deskTopY - 0.05, (monZ+grommetZ)/2);
+      const end   = new THREE.Vector3(grommetX, deskTopY + deskThick/2, grommetZ);
+      const curve = new THREE.CatmullRomCurve3([start, mid, end]);
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.006, 6, false), cableMat);
+      tube.castShadow = false;
+      setup.add(tube);
+    });
+
+    addContactShadow(setup, grommetX, grommetZ - 0.03, 0.14, 0.12, 0.55);
+
+    // ----- PC tower, on the floor tucked beside the desk -----
+    // Brushed-aluminum panel finish (reusing the same map set as the
+    // monitor arms/hardware elsewhere in the room) instead of one flat
+    // matte color, plus real geometric detail — a recessed front bezel,
+    // a stack of intake vent slats, a corner seam, and a small power LED
+    // — so the case reads as an actual machined enclosure, not a box.
+    const pcW = 0.29, pcH = 0.60, pcD = 0.55;
+    const pcMat = new THREE.MeshStandardMaterial({
+      color: 0x1c1c1c, roughness: 0.5, metalness: 0.55,
+      map: brushedMetal.colorMap, roughnessMap: brushedMetal.roughMap,
+      bumpMap: brushedMetal.bumpMap, bumpScale: 0.01
+    });
+    const pcTower = new THREE.Mesh(new THREE.BoxGeometry(pcW, pcH, pcD), pcMat);
+    pcTower.position.set(deskW/2 - 0.30, pcH/2, deskD*0.55);
+    pcTower.castShadow = true; pcTower.receiveShadow = true;
+    setup.add(pcTower);
+
+    // Recessed front bezel (sits slightly proud of the case face — real
+    // depth, not a decal) with a satin-metal accent panel inset into it.
+    const pcBezelMat = new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.6, metalness: 0.3 });
+    const pcBezel = new THREE.Mesh(new THREE.BoxGeometry(pcW*0.92, pcH*0.9, 0.012), pcBezelMat);
+    pcBezel.position.set(pcTower.position.x, pcTower.position.y, pcTower.position.z + pcD/2 + 0.007);
+    pcBezel.castShadow = true;
+    setup.add(pcBezel);
+    const pcAccent = new THREE.Mesh(
+      new THREE.PlaneGeometry(pcW*0.78, pcH*0.5),
+      new THREE.MeshStandardMaterial({
+        color: 0x2c2c2f, roughness: 0.38, metalness: 0.6,
+        map: brushedMetal.colorMap, roughnessMap: brushedMetal.roughMap
+      })
+    );
+    pcAccent.position.set(pcTower.position.x, pcTower.position.y + pcH*0.12, pcTower.position.z + pcD/2 + 0.018);
+    setup.add(pcAccent);
+
+    // Intake vent slats — thin, slightly recessed dark bars, the kind of
+    // small repeated geometric detail that reads as "manufactured object"
+    // rather than a smooth primitive at a glance.
+    const pcVentMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.8, metalness: 0.1 });
+    for(let i=0;i<7;i++){
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(pcW*0.7, 0.006, 0.006), pcVentMat);
+      vent.position.set(pcTower.position.x, pcTower.position.y - pcH*0.32 + i*0.018, pcTower.position.z + pcD/2 + 0.009);
+      setup.add(vent);
+    }
+    // Small power LED — a tiny emissive disc, the sort of pinpoint detail
+    // real desk photography always catches on a running PC.
+    const pcLed = new THREE.Mesh(
+      new THREE.CircleGeometry(0.004, 10),
+      new THREE.MeshStandardMaterial({ color: 0x2a6fff, emissive: 0x2a6fff, emissiveIntensity: 2.2, roughness: 0.3 })
+    );
+    pcLed.position.set(pcTower.position.x + pcW*0.32, pcTower.position.y - pcH*0.38, pcTower.position.z + pcD/2 + 0.014);
+    setup.add(pcLed);
+
+    // Grounding contact shadow beneath the tower
+    addContactShadow(setup, pcTower.position.x, pcTower.position.z, pcW*0.75, pcD*0.62, 0.75);
+
+    // ----- Task chair, pulled up to the desk -----
+    {
+      // Real materials instead of flat color: a soft padded-leatherette
+      // bump on the seat/back cushions so they don't read as smooth
+      // plastic, an actual woven knit texture on the mesh back panel, and
+      // the same brushed-aluminum finish used on the desk hardware for
+      // the chair's metal parts, so the whole chair stops looking like a
+      // single-material placeholder next to the rest of the room.
+      const chairCushion = makePaintedWoodMaps(256, '#232326'); // reused as a generic subtle-grain bump/rough set, tinted dark
+      const chairMat   = new THREE.MeshStandardMaterial({
+        color: 0x1e1e20, roughness: 0.65, metalness: 0.05,
+        roughnessMap: chairCushion.roughMap, bumpMap: chairCushion.bumpMap, bumpScale: 0.0009
+      });
+      const chairKnit = makeKnitFabricMaps(128, '#333338');
+      chairKnit.colorMap.repeat.set(3, 3);
+      chairKnit.bumpMap.repeat.set(3, 3);
+      const meshMat    = new THREE.MeshStandardMaterial({
+        color: 0xffffff, map: chairKnit.colorMap, roughness: 0.85, metalness: 0.02,
+        bumpMap: chairKnit.bumpMap, bumpScale: 0.0022
+      });
+      const chairMetal = new THREE.MeshStandardMaterial({
+        color: 0x3a3a3c, roughness: 0.35, metalness: 0.75,
+        map: brushedMetal.colorMap, roughnessMap: brushedMetal.roughMap, bumpMap: brushedMetal.bumpMap, bumpScale: 0.006
+      });
+
+      const chair = new THREE.Group();
+      // Pushed back out from the desk and off to the side, angled loosely
+      // rather than squared up to the desk — read as just vacated, not
+      // tucked in and waiting.
+      const chairZ = deskD + 0.62 + 0.55; // pulled out from the desk's front edge
+      chair.position.set(-0.04 - 0.70, 0, chairZ);
+      chair.rotation.y = -0.6; // swiveled off-axis, not facing the desk square-on
+      setup.add(chair);
+
+      // The base (hub, star arms, casters, center column) stays planted on
+      // the floor at a fixed orientation. Only the seat/back assembly
+      // swivels, so it's built as its own subgroup nested inside the chair
+      // group — the idle animation drives this subgroup's rotation, not
+      // the chair group's, so the legs never turn.
+      const seatGroup = new THREE.Group();
+      chair.add(seatGroup);
+      deskChairGroup = seatGroup;
+      deskChairBaseYaw = 0;
+
+      const hubY = 0.055;
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.05, 12), chairMetal);
+      hub.position.y = hubY;
+      hub.castShadow = true;
+      chair.add(hub);
+
+      const starArms = 5, starLen = 0.28;
+      for(let i=0;i<starArms;i++){
+        const a = (i/starArms) * Math.PI*2;
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.017, starLen, 8), chairMetal);
+        arm.rotation.z = Math.PI/2;
+        arm.rotation.y = -a;
+        arm.position.set(Math.cos(a)*starLen/2, hubY - 0.01, Math.sin(a)*starLen/2);
+        arm.castShadow = true;
+        chair.add(arm);
+
+        const casterR = 0.028;
+        const caster = new THREE.Mesh(new THREE.SphereGeometry(casterR, 10, 10), chairMat);
+        caster.position.set(Math.cos(a)*starLen, casterR, Math.sin(a)*starLen);
+        caster.scale.y = 0.85;
+        caster.castShadow = true;
+        chair.add(caster);
+        addContactShadow(chair, caster.position.x, caster.position.z, 0.05, 0.05, 0.55);
+      }
+
+      const seatY = 0.47;
+      const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, seatY - hubY - 0.05, 10), chairMetal);
+      cylinder.position.y = (seatY - 0.05 + hubY + 0.05)/2;
+      cylinder.castShadow = true;
+      chair.add(cylinder);
+      const cylinderSleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.09, 10), chairMat);
+      cylinderSleeve.position.y = seatY - 0.09;
+      chair.add(cylinderSleeve);
+
+      const seatPan = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.06, 0.44), chairMat);
+      seatPan.position.y = seatY;
+      seatPan.castShadow = true; seatPan.receiveShadow = true;
+      seatGroup.add(seatPan);
+      const seatCushion = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.03, 0.40), chairMat);
+      seatCushion.position.y = seatY + 0.045;
+      seatCushion.castShadow = true;
+      seatGroup.add(seatCushion);
+
+      const backPost = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), chairMetal);
+      backPost.position.set(0, seatY + 0.12, 0.19);
+      seatGroup.add(backPost);
+
+      const backGroup = new THREE.Group();
+      backGroup.position.set(0, seatY + 0.22, 0.21);
+      backGroup.rotation.x = -0.04; // upright, only the faintest recline
+      seatGroup.add(backGroup);
+
+      const backFrame = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.56, 0.05), chairMat);
+      backFrame.castShadow = true;
+      backGroup.add(backFrame);
+      const backMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.40, 0.50), meshMat);
+      backMesh.position.z = 0.028;
+      backGroup.add(backMesh);
+      const lumbar = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.03), chairMat);
+      lumbar.position.set(0, -0.10, 0.03);
+      backGroup.add(lumbar);
+      const headrest = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.14, 0.05), chairMat);
+      headrest.position.set(0, 0.32, 0.01);
+      backGroup.add(headrest);
+
+      [-1,1].forEach(side=>{
+        const postArm = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.20, 0.03), chairMetal);
+        postArm.position.set(side*0.22, seatY + 0.10, 0.02);
+        seatGroup.add(postArm);
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.025, 0.22), chairMat);
+        pad.position.set(side*0.22, seatY + 0.205, 0.02);
+        pad.castShadow = true;
+        seatGroup.add(pad);
+      });
+    }
+  }
+
+  // ---------- Floating wall shelves (two vertical stacks, red, empty) ----------
+  {
+    const shelfColor = 0xb5342a; // matching red from reference photo
+    // Satin-painted MDF/wood, not a flat plastic color — faint grain shows
+    // through the paint film, and the top/bottom edges pick up the kind of
+    // light wear a real shelf gets from hands and objects sliding on/off.
+    const shelfPaint = makePaintedWoodMaps(512, '#b5342a');
+    shelfPaint.colorMap.repeat.set(1, 2.4);
+    shelfPaint.roughMap.repeat.set(1, 2.4);
+    shelfPaint.bumpMap.repeat.set(1, 2.4);
+    const shelfMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, map: shelfPaint.colorMap, roughness: 0.55,
+      roughnessMap: shelfPaint.roughMap, bumpMap: shelfPaint.bumpMap, bumpScale: 0.0012,
+      metalness: 0.04
+    });
+
+    // Single narrow vertical spine mounted flush to the wall, with shelves
+    // cantilevered off its face at evenly spaced intervals — matches the
+    // reference product photo (a tall backplate + 7 floating shelves).
+    function makeShelfStack(xPos, zPos, spineH, spineBottomY, shelfW, shelfD, shelfCount){
+      const g = new THREE.Group();
+      g.position.set(xPos, 0, zPos);
+
+      const spineW = shelfW * 0.62;
+      const spineThick = 0.028;
+      const spine = new THREE.Mesh(new THREE.BoxGeometry(spineW, spineH, spineThick), shelfMat);
+      spine.position.set(0, spineBottomY + spineH/2, spineThick/2);
+      spine.castShadow = true;
+      spine.receiveShadow = true;
+      g.add(spine);
+
+      const shelfThick = 0.03;
+      const topMargin = 0.12, bottomMargin = 0.12;
+      const usableH = spineH - topMargin - bottomMargin;
+      for(let i=0; i<shelfCount; i++){
+        const y = spineBottomY + bottomMargin + (usableH * i / (shelfCount - 1));
+        const shelf = new THREE.Mesh(new THREE.BoxGeometry(shelfW, shelfThick, shelfD), shelfMat);
+        shelf.position.set(0, y, shelfD/2 - spineThick/2 + spineThick/2);
+        shelf.castShadow = true;
+        shelf.receiveShadow = true;
+        g.add(shelf);
+      }
+
+      return g;
+    }
+
+    const shelfW = 0.52, shelfD = 0.34;
+    const spineH = 2.75, spineBottomY = 0.25;
+    const shelfCount = 7;
+
+    // Left stack — back wall, left of the desk setup
+    const leftShelves = makeShelfStack(-2.15, -halfL + 0.02, spineH, spineBottomY, shelfW, shelfD, shelfCount);
+    room.add(leftShelves);
+
+    // ---------- Left-shelf styling: a small, neatly arranged set of ----------
+    // ---------- creative-studio objects (sketchbook, camera + lens, ----------
+    // ---------- headphones, coffee mug, small plant) ----------
+    {
+      const shelfThickLocal = 0.03;
+      const topMarginLocal = 0.12, bottomMarginLocal = 0.12;
+      const usableHLocal = spineH - topMarginLocal - bottomMarginLocal;
+      function shelfTopY(i){
+        const y = spineBottomY + bottomMarginLocal + (usableHLocal * i / (shelfCount - 1));
+        return y + shelfThickLocal/2;
+      }
+
+      // -- materials, tuned to the room's warm, muted palette --
+      const studioPaperMat   = new THREE.MeshStandardMaterial({ color: 0xcfbb98, roughness: 0.88, metalness: 0.02 });
+      const studioBindingMat = new THREE.MeshStandardMaterial({ color: 0x362e24, roughness: 0.75, metalness: 0.05 });
+      const studioBodyMat    = new THREE.MeshStandardMaterial({ color: 0x222325, roughness: 0.42, metalness: 0.32 });
+      const studioBrassMat   = new THREE.MeshPhysicalMaterial({ color: 0xc7a15c, roughness: 0.25, metalness: 1.0, clearcoat: 0.4, clearcoatRoughness: 0.2 });
+      const studioLensMat    = new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.4, metalness: 0.55 });
+      const studioGlassMat   = new THREE.MeshPhysicalMaterial({ color: 0x2e3d47, roughness: 0.12, metalness: 0.1, clearcoat: 0.8, envMapIntensity: 1.1 });
+      const studioLeatherMat = new THREE.MeshStandardMaterial({ color: 0x2c2620, roughness: 0.55, metalness: 0.08 });
+      const studioMugMat     = new THREE.MeshStandardMaterial({ color: 0xf1ece1, roughness: 0.38, metalness: 0.04 });
+      const studioMugInMat   = new THREE.MeshStandardMaterial({ color: 0x4a3324, roughness: 0.5, metalness: 0.02 });
+      const studioPotMat     = new THREE.MeshStandardMaterial({ color: 0xa15c3a, roughness: 0.92, metalness: 0.02 });
+      const studioLeafMatA   = new THREE.MeshStandardMaterial({ color: 0x51643c, roughness: 0.65, metalness: 0.03 });
+      const studioLeafMatB   = new THREE.MeshStandardMaterial({ color: 0x3d4d2e, roughness: 0.65, metalness: 0.03 });
+
+      // -- sketchbook: flat cover with a darker spine strip --
+      function addSketchbook(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const w = 0.15, h = 0.018, d = 0.20;
+        const cover = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), studioPaperMat);
+        cover.castShadow = false; cover.receiveShadow = false;
+        g.add(cover);
+        const spine = new THREE.Mesh(new THREE.BoxGeometry(0.016, h + 0.004, d), studioBindingMat);
+        spine.position.set(-w/2 + 0.009, 0, 0);
+        spine.castShadow = false;
+        g.add(spine);
+        g.position.set(x, y + h/2, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- small plant: terracotta pot + a compact cluster of leaves --
+      function addPlant(parent, x, z, y){
+        const g = new THREE.Group();
+        const potH = 0.052, potR = 0.033;
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.82, potR, potH, 10), studioPotMat);
+        pot.position.set(0, potH/2, 0);
+        pot.castShadow = false; pot.receiveShadow = false;
+        g.add(pot);
+        const rim = new THREE.Mesh(new THREE.CylinderGeometry(potR*0.86, potR*0.86, 0.006, 10), studioPotMat);
+        rim.position.set(0, potH - 0.002, 0);
+        g.add(rim);
+        const leaves = [
+          [0, 0.05, 0, 0.040, studioLeafMatA],
+          [0.024, 0.075, 0.012, 0.030, studioLeafMatB],
+          [-0.024, 0.070, -0.014, 0.028, studioLeafMatA],
+          [0.004, 0.095, -0.016, 0.026, studioLeafMatB]
+        ];
+        leaves.forEach(p=>{
+          const leaf = new THREE.Mesh(new THREE.SphereGeometry(p[3], 8, 6), p[4]);
+          leaf.position.set(p[0], potH + p[1] - 0.03, p[2]);
+          leaf.scale.set(1, 1.25, 1);
+          leaf.castShadow = false;
+          g.add(leaf);
+        });
+        g.position.set(x, y, z);
+        parent.add(g);
+      }
+
+      // -- camera: boxy body, top plate, lens barrel + glass, viewfinder --
+      function addCamera(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const bw = 0.10, bh = 0.046, bd = 0.076;
+        const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), studioBodyMat);
+        body.position.set(0, bh/2, 0);
+        body.castShadow = false; body.receiveShadow = false;
+        g.add(body);
+        const topPlate = new THREE.Mesh(new THREE.BoxGeometry(bw*0.98, 0.006, bd*0.98), studioBrassMat);
+        topPlate.position.set(0, bh + 0.003, 0);
+        g.add(topPlate);
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.029, 0.05, 10), studioLensMat);
+        barrel.rotation.x = Math.PI/2;
+        barrel.position.set(0, bh/2, bd/2 + 0.025);
+        barrel.castShadow = false;
+        g.add(barrel);
+        const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.004, 10), studioGlassMat);
+        glass.rotation.x = Math.PI/2;
+        glass.position.set(0, bh/2, bd/2 + 0.051);
+        g.add(glass);
+        const vf = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.014, 0.018), studioBodyMat);
+        vf.position.set(0, bh + 0.007, -bd/2 + 0.016);
+        vf.castShadow = false;
+        g.add(vf);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- a second, loose lens resting on its side next to the camera --
+      function addLooseLens(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const r = 0.026, len = 0.072;
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.9, len, 10), studioLensMat);
+        barrel.rotation.z = Math.PI/2;
+        barrel.position.set(0, r, 0);
+        barrel.castShadow = false; barrel.receiveShadow = false;
+        g.add(barrel);
+        const glass = new THREE.Mesh(new THREE.CylinderGeometry(r*0.78, r*0.78, 0.004, 10), studioGlassMat);
+        glass.rotation.z = Math.PI/2;
+        glass.position.set(len/2, r, 0);
+        g.add(glass);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(r*0.94, 0.003, 8, 20), studioBrassMat);
+        ring.rotation.y = Math.PI/2;
+        ring.position.set(-0.012, r, 0);
+        g.add(ring);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- coffee mug: simple cylinder body, inner rim, small handle --
+      function addMug(parent, x, z, y){
+        const g = new THREE.Group();
+        const r = 0.028, h = 0.06;
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(r, r*0.92, h, 10), studioMugMat);
+        body.position.set(0, h/2, 0);
+        body.castShadow = false; body.receiveShadow = false;
+        g.add(body);
+        const rimIn = new THREE.Mesh(new THREE.CylinderGeometry(r*0.82, r*0.82, 0.004, 10), studioMugInMat);
+        rimIn.position.set(0, h - 0.002, 0);
+        g.add(rimIn);
+        const handle = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.005, 8, 16, Math.PI*1.3), studioMugMat);
+        handle.rotation.z = Math.PI/2;
+        handle.position.set(r + 0.006, h/2, 0);
+        handle.castShadow = false;
+        g.add(handle);
+        g.position.set(x, y, z);
+        parent.add(g);
+      }
+
+      // -- headphones: two flat ear cups with brass rings, joined by an arced band --
+      function addHeadphones(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const cupR = 0.028, cupH = 0.015, span = 0.085;
+        [-1, 1].forEach(side=>{
+          const cup = new THREE.Mesh(new THREE.CylinderGeometry(cupR, cupR, cupH, 10), studioLeatherMat);
+          cup.rotation.z = Math.PI/2;
+          cup.position.set(side*span, cupR, 0);
+          cup.castShadow = false; cup.receiveShadow = false;
+          g.add(cup);
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(cupR*0.82, 0.003, 8, 16), studioBrassMat);
+          ring.rotation.y = Math.PI/2;
+          ring.position.set(side*(span + cupH/2 + 0.001), cupR, 0);
+          g.add(ring);
+        });
+        const band = new THREE.Mesh(new THREE.TorusGeometry(span, 0.006, 8, 24, Math.PI), studioLeatherMat);
+        band.position.set(0, cupR*2 - 0.006, 0);
+        band.castShadow = false;
+        g.add(band);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- placement: four of the seven shelves used, alternating with bare --
+      // -- shelves so the arrangement stays airy and minimal rather than packed --
+      addSketchbook(leftShelves, -0.09, 0.16, shelfTopY(1), -0.16);
+      addPlant(leftShelves, 0.115, 0.12, shelfTopY(1));
+
+      addCamera(leftShelves, 0, 0.155, shelfTopY(2), 0.08);
+
+      addMug(leftShelves, -0.115, 0.13, shelfTopY(4));
+      addLooseLens(leftShelves, 0.10, 0.15, shelfTopY(4), 0.5);
+
+      addHeadphones(leftShelves, 0, 0.14, shelfTopY(5), 0.12);
+    }
+
+    // Right stack — back wall, right of the desk setup
+    const rightShelves = makeShelfStack(2.15, -halfL + 0.02, spineH, spineBottomY, shelfW, shelfD, shelfCount);
+    room.add(rightShelves);
+
+    // ---------- Right-shelf styling: a felt frog puppet perched on one ----------
+    // ---------- shelf, seated so its long legs dangle off the front edge ----------
+    {
+      const shelfThickLocal = 0.03;
+      const topMarginLocal = 0.12, bottomMarginLocal = 0.12;
+      const usableHLocal = spineH - topMarginLocal - bottomMarginLocal;
+      function shelfTopYRight(i){
+        const y = spineBottomY + bottomMarginLocal + (usableHLocal * i / (shelfCount - 1));
+        return y + shelfThickLocal/2;
+      }
+
+      // -- materials: soft felt-like green body, white/black googly eyes,
+      // a red felt mouth, and a paler felt belly patch --
+      const puppetBodyMat  = new THREE.MeshStandardMaterial({ color: 0x4d9a34, roughness: 0.92, metalness: 0.0 });
+      const puppetBellyMat = new THREE.MeshStandardMaterial({ color: 0x7fbf5a, roughness: 0.92, metalness: 0.0 });
+      const puppetEyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf5f2e9, roughness: 0.5, metalness: 0.0 });
+      const puppetPupilMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.35, metalness: 0.0 });
+      const puppetMouthMat = new THREE.MeshStandardMaterial({ color: 0xa32020, roughness: 0.6, metalness: 0.0 });
+
+      function addFrogPuppet(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+
+        // torso — squashed sphere, felt body
+        const torso = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 16), puppetBodyMat);
+        torso.scale.set(1, 1.15, 0.8);
+        torso.position.set(0, 0.085, 0);
+        torso.castShadow = true; torso.receiveShadow = true;
+        g.add(torso);
+
+        // pale belly patch
+        const belly = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8), puppetBellyMat);
+        belly.scale.set(1, 1.1, 0.55);
+        belly.position.set(0, 0.06, 0.045);
+        g.add(belly);
+
+        // head — flattened wide sphere
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.062, 20, 16), puppetBodyMat);
+        head.scale.set(1.15, 0.85, 1.0);
+        head.position.set(0, 0.17, 0.01);
+        head.castShadow = true; head.receiveShadow = true;
+        g.add(head);
+
+        // eyes on small stalks — classic felt-puppet look
+        [-1, 1].forEach(side=>{
+          const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.03, 10), puppetBodyMat);
+          stalk.position.set(side*0.032, 0.215, 0.03);
+          stalk.rotation.x = -0.3;
+          g.add(stalk);
+          const eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 8), puppetEyeWhiteMat);
+          eyeWhite.position.set(side*0.032, 0.235, 0.045);
+          eyeWhite.scale.set(1, 1, 0.7);
+          g.add(eyeWhite);
+          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), puppetPupilMat);
+          pupil.position.set(side*0.032, 0.238, 0.058);
+          g.add(pupil);
+        });
+
+        // wide felt mouth
+        const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.006, 8, 16, Math.PI*0.9), puppetMouthMat);
+        mouth.rotation.z = Math.PI;
+        mouth.rotation.x = 0.15;
+        mouth.position.set(0, 0.155, 0.058);
+        g.add(mouth);
+
+        // arms — thin felt tubes, one resting on the knee
+        [-1, 1].forEach(side=>{
+          const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.09, 10), puppetBodyMat);
+          arm.position.set(side*0.075, 0.095, 0.05);
+          arm.rotation.z = side * 0.9;
+          arm.rotation.x = -0.4;
+          arm.castShadow = true;
+          g.add(arm);
+        });
+
+        // legs — long and thin, seated with knees bent over the shelf edge
+        // so the lower legs and feet hang down in front of the shelf lip.
+        [-1, 1].forEach((side, idx)=>{
+          const legGroup = new THREE.Group();
+          legGroup.position.set(side*0.032, 0.03, 0.06 + idx*0.012);
+          g.add(legGroup);
+
+          // thigh — runs forward off the seat toward the shelf edge
+          const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.013, 0.11, 10), puppetBodyMat);
+          thigh.rotation.x = Math.PI/2 * 0.85;
+          thigh.position.set(0, -0.005, 0.05);
+          thigh.castShadow = true;
+          legGroup.add(thigh);
+
+          // shin — bends downward, hanging off the front edge of the shelf
+          const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.011, 0.14, 10), puppetBodyMat);
+          shin.rotation.x = -0.15;
+          shin.position.set(0, -0.09, 0.115);
+          shin.castShadow = true;
+          legGroup.add(shin);
+
+          // webbed foot
+          const foot = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), puppetBodyMat);
+          foot.scale.set(1, 0.5, 1.6);
+          foot.position.set(0, -0.155, 0.14);
+          foot.castShadow = true;
+          legGroup.add(foot);
+        });
+
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // Seated near the front-right of a mid-height shelf, facing slightly
+      // outward, with legs hanging off the shelf's front edge (+z).
+      addFrogPuppet(rightShelves, 0.02, -0.02, shelfTopYRight(3), -0.25);
+    }
+
+    // ---------- Streetwear styling: fills the remaining bare shelves on ----------
+    // ---------- both stacks with sneakers, folded hoodies, a cap, a ----------
+    // ---------- beanie, a spray can, and a small vinyl toy ----------
+    {
+      const shelfThickLocal = 0.03;
+      const topMarginLocal = 0.12, bottomMarginLocal = 0.12;
+      const usableHLocal = spineH - topMarginLocal - bottomMarginLocal;
+      function shelfTopYCommon(i){
+        const y = spineBottomY + bottomMarginLocal + (usableHLocal * i / (shelfCount - 1));
+        return y + shelfThickLocal/2;
+      }
+
+      // -- palette: streetwear staples — off-white leather, black rubber,
+      // a denim-blue accent, and a warm orange pop for the spray can --
+      const swSoleMat    = new THREE.MeshStandardMaterial({ color: 0xece5d6, roughness: 0.7, metalness: 0.02 });
+      const swUpperMat   = new THREE.MeshStandardMaterial({ color: 0xf2ede2, roughness: 0.55, metalness: 0.02 });
+      const swUpperMat2  = new THREE.MeshStandardMaterial({ color: 0x24211d, roughness: 0.55, metalness: 0.05 });
+      const swAccentMat  = new THREE.MeshStandardMaterial({ color: 0x2f4a68, roughness: 0.5, metalness: 0.05 });
+      const swLaceMat    = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.8, metalness: 0.0 });
+      const swHoodieMatA = new THREE.MeshStandardMaterial({ color: 0x8a8578, roughness: 0.92, metalness: 0.0 });
+      const swHoodieMatB = new THREE.MeshStandardMaterial({ color: 0x3a3d33, roughness: 0.92, metalness: 0.0 });
+      const swCapMat     = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.6, metalness: 0.05 });
+      const swCapPanelMat= new THREE.MeshStandardMaterial({ color: 0xc94f2c, roughness: 0.55, metalness: 0.02 });
+      const swBeanieMat  = new THREE.MeshStandardMaterial({ color: 0x6b4a3a, roughness: 0.95, metalness: 0.0 });
+      const swCanBodyMat = new THREE.MeshStandardMaterial({ color: 0xe8792f, roughness: 0.35, metalness: 0.25 });
+      const swCanCapMat  = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, roughness: 0.4, metalness: 0.2 });
+      const swToyBodyMat = new THREE.MeshStandardMaterial({ color: 0xd4c840, roughness: 0.4, metalness: 0.1 });
+      const swToyHeadMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.35, metalness: 0.15 });
+
+      // -- chunky low-top sneaker, built from a sole slab + rounded upper --
+      function addSneaker(parent, x, z, y, rotY, mirrored){
+        const g = new THREE.Group();
+        const sole = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.016, 0.19), swSoleMat);
+        sole.position.set(0, 0.008, 0);
+        sole.castShadow = true; sole.receiveShadow = false;
+        g.add(sole);
+
+        const upper = new THREE.Mesh(new THREE.SphereGeometry(0.042, 12, 10), swUpperMat);
+        upper.scale.set(1.0, 0.62, 1.65);
+        upper.position.set(0, 0.034, -0.01);
+        upper.castShadow = true; upper.receiveShadow = false;
+        g.add(upper);
+
+        const toe = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), swUpperMat2);
+        toe.scale.set(0.95, 0.55, 0.85);
+        toe.position.set(0, 0.026, 0.085);
+        toe.castShadow = false;
+        g.add(toe);
+
+        const heelCap = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.05, 0.03), swAccentMat);
+        heelCap.position.set(0, 0.03, -0.085);
+        heelCap.castShadow = false;
+        g.add(heelCap);
+
+        const tongue = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.012), swLaceMat);
+        tongue.position.set(0, 0.052, 0.005);
+        tongue.rotation.x = -0.25;
+        g.add(tongue);
+
+        for(let i=0;i<3;i++){
+          const lace = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.005, 0.008), swLaceMat);
+          lace.position.set(0, 0.048 - i*0.011, -0.005 + i*0.018);
+          g.add(lace);
+        }
+
+        g.scale.set(mirrored ? -1 : 1, 1, 1);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- a pair, angled together as if just kicked off --
+      function addSneakerPair(parent, x, z, y, rotY){
+        addSneaker(parent, x - 0.035, z + 0.01, y, (rotY||0) + 0.12, false);
+        addSneaker(parent, x + 0.045, z - 0.015, y, (rotY||0) - 0.22, true);
+      }
+
+      // -- folded hoodie: two soft stacked slabs with a rounded front lip
+      // and a small marled drawstring detail --
+      function addFoldedHoodie(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.028, 0.12), swHoodieMatA);
+        base.position.set(0, 0.014, 0);
+        base.castShadow = true; base.receiveShadow = false;
+        g.add(base);
+        const top = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.024, 0.105), swHoodieMatB);
+        top.position.set(0, 0.014 + 0.026, -0.004);
+        top.castShadow = true; top.receiveShadow = false;
+        g.add(top);
+        [-1, 1].forEach(side=>{
+          const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.045, 6), swLaceMat);
+          cord.rotation.z = Math.PI/2;
+          cord.position.set(side*0.02, 0.014 + 0.026 + 0.014, 0.05);
+          g.add(cord);
+        });
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- snapback cap: domed crown + flat brim + contrast front panel --
+      function addSnapbackCap(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 8, 0, Math.PI*2, 0, Math.PI/2), swCapMat);
+        crown.position.set(0, 0.026, 0);
+        crown.castShadow = true; crown.receiveShadow = false;
+        g.add(crown);
+        const panel = new THREE.Mesh(new THREE.CircleGeometry(0.018, 16), swCapPanelMat);
+        panel.position.set(0, 0.03, 0.045);
+        panel.rotation.y = 0;
+        g.add(panel);
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.006, 12, 1, false, -Math.PI*0.42, Math.PI*0.84), swCapMat);
+        brim.position.set(0, 0.014, 0.04);
+        brim.castShadow = false;
+        g.add(brim);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- ribbed beanie, sitting slightly slouched --
+      function addBeanie(parent, x, z, y){
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.046, 12, 8, 0, Math.PI*2, 0, Math.PI*0.62), swBeanieMat);
+        body.position.set(0, 0.03, 0);
+        body.castShadow = true; body.receiveShadow = false;
+        g.add(body);
+        const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.044, 0.018, 10), swBeanieMat);
+        cuff.position.set(0, 0.012, 0);
+        cuff.castShadow = false;
+        g.add(cuff);
+        g.position.set(x, y, z);
+        parent.add(g);
+      }
+
+      // -- spray paint can, small graffiti-culture nod on the shelf --
+      function addSprayCan(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.09, 10), swCanBodyMat);
+        body.position.set(0, 0.045, 0);
+        body.castShadow = true; body.receiveShadow = false;
+        g.add(body);
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, 0.02, 10), swCanCapMat);
+        cap.position.set(0, 0.10, 0);
+        cap.castShadow = false;
+        g.add(cap);
+        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.01, 8), swCanCapMat);
+        nozzle.position.set(0, 0.115, 0);
+        g.add(nozzle);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- small collectible vinyl toy figure — rounded body, blocky head --
+      function addVinylToy(parent, x, z, y, rotY){
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), swToyBodyMat);
+        body.scale.set(1, 1.4, 1);
+        body.position.set(0, 0.038, 0);
+        body.castShadow = true; body.receiveShadow = false;
+        g.add(body);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.03, 0.034), swToyHeadMat);
+        head.position.set(0, 0.072, 0);
+        head.castShadow = false;
+        g.add(head);
+        g.position.set(x, y, z);
+        g.rotation.y = rotY || 0;
+        parent.add(g);
+      }
+
+      // -- left stack: fill the three bare shelves (0, 3, 6) --
+      addSneakerPair(leftShelves, 0.0, 0.13, shelfTopYCommon(0), 0.1);
+
+      addFoldedHoodie(leftShelves, -0.08, 0.12, shelfTopYCommon(3), 0.05);
+      addSnapbackCap(leftShelves, 0.10, 0.15, shelfTopYCommon(3), -0.3);
+
+      addBeanie(leftShelves, -0.09, 0.14, shelfTopYCommon(6));
+      addVinylToy(leftShelves, 0.10, 0.15, shelfTopYCommon(6), 0.4);
+
+      // -- right stack: fill the bare shelves around the frog puppet
+      // (0, 1, 2 below it, 4, 5, 6 above it) --
+      addSneakerPair(rightShelves, 0.0, 0.13, shelfTopYCommon(0), -0.15);
+
+      addFoldedHoodie(rightShelves, 0.09, 0.12, shelfTopYCommon(1), -0.08);
+      addSprayCan(rightShelves, -0.10, 0.14, shelfTopYCommon(1), 0.2);
+
+      addSnapbackCap(rightShelves, -0.08, 0.15, shelfTopYCommon(2), 0.35);
+      addVinylToy(rightShelves, 0.10, 0.15, shelfTopYCommon(2), -0.2);
+
+      addFoldedHoodie(rightShelves, -0.08, 0.12, shelfTopYCommon(4), 0.12);
+      addBeanie(rightShelves, 0.10, 0.14, shelfTopYCommon(4));
+
+      addSneakerPair(rightShelves, 0.0, 0.13, shelfTopYCommon(5), 0.2);
+
+      addSprayCan(rightShelves, -0.09, 0.14, shelfTopYCommon(6), -0.1);
+      addSnapbackCap(rightShelves, 0.09, 0.15, shelfTopYCommon(6), 0.4);
+    }
+  }
+
+  // ---------- Clothing rack — premium satin silver steel retail rack ----------
+  {
+    // Single-finish satin silver steel: heavier-gauge tube with brushed-metal
+    // color/roughness/bump maps (mixed darker + lighter streaks), so it
+    // picks up real reflections and a visible brushed grain rather than
+    // reading as flat paint — plus a dedicated weld-bead material for the
+    // joints so corners read as welded steel, not cast brass.
+    // Satin silver steel: a light brushed-metal color/roughness/bump map
+    // set (mixed darker + lighter streaks, so both the shadowed grooves and
+    // bright ridges of a real satin-finish tube show through) in place of
+    // the dark version used elsewhere in the room.
+    function makeSilverMetalMaps(size){
+      const colorCanvas = document.createElement('canvas');
+      colorCanvas.width = colorCanvas.height = size;
+      const cctx = colorCanvas.getContext('2d');
+      cctx.fillStyle = '#c7cbd1';
+      cctx.fillRect(0, 0, size, size);
+      for(let i=0; i<900; i++){
+        const x = Math.random()*size;
+        const lighter = Math.random() > 0.5;
+        const v = lighter ? (210 + Math.random()*35) : (110 + Math.random()*40);
+        cctx.strokeStyle = `rgba(${v},${v},${v+2},${0.05 + Math.random()*0.07})`;
+        cctx.lineWidth = 0.5 + Math.random()*1.1;
+        cctx.beginPath();
+        cctx.moveTo(x, 0);
+        cctx.lineTo(x + (Math.random()-0.5)*3, size);
+        cctx.stroke();
+      }
+      const sheen = cctx.createLinearGradient(0, 0, size, size);
+      sheen.addColorStop(0.35, 'rgba(255,255,255,0)');
+      sheen.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+      sheen.addColorStop(0.65, 'rgba(255,255,255,0)');
+      cctx.fillStyle = sheen;
+      cctx.fillRect(0, 0, size, size);
+      const colorMap = new THREE.CanvasTexture(colorCanvas);
+      colorMap.wrapS = colorMap.wrapT = THREE.RepeatWrapping;
+      colorMap.repeat.set(1, 2.4);
+      colorMap.encoding = THREE.sRGBEncoding;
+
+      const roughCanvas = document.createElement('canvas');
+      roughCanvas.width = roughCanvas.height = size;
+      const rctx = roughCanvas.getContext('2d');
+      rctx.fillStyle = 'rgb(85,85,85)';
+      rctx.fillRect(0, 0, size, size);
+      for(let i=0; i<900; i++){
+        const x = Math.random()*size;
+        const v = 60 + Math.random()*60;
+        rctx.strokeStyle = `rgba(${v},${v},${v},0.5)`;
+        rctx.lineWidth = 0.5 + Math.random()*1.1;
+        rctx.beginPath();
+        rctx.moveTo(x, 0);
+        rctx.lineTo(x + (Math.random()-0.5)*3, size);
+        rctx.stroke();
+      }
+      const roughMap = new THREE.CanvasTexture(roughCanvas);
+      roughMap.wrapS = roughMap.wrapT = THREE.RepeatWrapping;
+      roughMap.repeat.set(1, 2.4);
+
+      const bumpCanvas = document.createElement('canvas');
+      bumpCanvas.width = bumpCanvas.height = size;
+      const bctx = bumpCanvas.getContext('2d');
+      bctx.fillStyle = 'rgb(128,128,128)';
+      bctx.fillRect(0, 0, size, size);
+      for(let i=0; i<900; i++){
+        const x = Math.random()*size;
+        const v = 110 + Math.random()*40;
+        bctx.strokeStyle = `rgba(${v},${v},${v},0.6)`;
+        bctx.lineWidth = 0.5 + Math.random()*1.1;
+        bctx.beginPath();
+        bctx.moveTo(x, 0);
+        bctx.lineTo(x + (Math.random()-0.5)*3, size);
+        bctx.stroke();
+      }
+      const bumpMap = new THREE.CanvasTexture(bumpCanvas);
+      bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+      bumpMap.repeat.set(1, 2.4);
+
+      return { colorMap, roughMap, bumpMap };
+    }
+    const rackTubeMaps = makeSilverMetalMaps(512);
+    const rackMat = new THREE.MeshPhysicalMaterial({
+      color: 0xd7dade, roughness: 0.38, metalness: 0.92,
+      map: rackTubeMaps.colorMap, roughnessMap: rackTubeMaps.roughMap,
+      bumpMap: rackTubeMaps.bumpMap, bumpScale: 0.0012,
+      // Moderate clearcoat, spread by a mid clearcoatRoughness — a soft,
+      // broad sheen along the top of the tube rather than a hard mirror
+      // hotspot, the way real satin/brushed stainless catches light.
+      clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 1.1
+    });
+    // Fittings (corners, collars, ferrules) — same silver-steel family, a
+    // touch smoother/shinier than the tube so cast/machined hardware reads
+    // distinct from drawn tube, the way polished fittings pop against a
+    // satin-finished rail.
+    const brassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xe4e7ea, roughness: 0.2, metalness: 0.95,
+      clearcoat: 0.4, clearcoatRoughness: 0.2, envMapIntensity: 1.3
+    });
+    // Weld-bead material: a dedicated ripple bump map (the little overlapping
+    // arcs a real MIG weld leaves) plus a faint heat-discoloration tint, so
+    // the seam reads as ground/ground-flush steel rather than a smooth cast
+    // ring. Rougher and duller than the tube — no clean specular highlight.
+    function makeWeldBumpTexture(size){
+      const c = document.createElement('canvas'); c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, size, size);
+      // overlapping weld-pass ripples running across the seam
+      const rippleCount = 26;
+      for(let i=0; i<rippleCount; i++){
+        const cx = (i / rippleCount) * size + (Math.random()-0.5)*6;
+        const r = size*0.09 + Math.random()*size*0.03;
+        const v = 120 + Math.random()*70;
+        ctx.strokeStyle = `rgba(${v},${v},${v},0.55)`;
+        ctx.lineWidth = 2.5 + Math.random()*1.5;
+        ctx.beginPath();
+        ctx.arc(cx, size*0.5 + (Math.random()-0.5)*size*0.15, r, Math.PI*0.15, Math.PI*0.85);
+        ctx.stroke();
+      }
+      // fine pitting/grind marks
+      for(let i=0; i<400; i++){
+        const x = Math.random()*size, y = Math.random()*size;
+        const v = Math.random() > 0.5 ? 40 : 200;
+        ctx.fillStyle = `rgba(${v},${v},${v},${0.06 + Math.random()*0.08})`;
+        ctx.fillRect(x, y, 1.4, 1.4);
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+    const weldBumpTex = makeWeldBumpTexture(256);
+    const weldMat = new THREE.MeshPhysicalMaterial({
+      color: 0x9a9da2, roughness: 0.72, metalness: 0.6,
+      bumpMap: weldBumpTex, bumpScale: 0.0022,
+      clearcoat: 0.06, clearcoatRoughness: 0.75, envMapIntensity: 0.55
+    });
+    function addWeldBead(parent, position, tubeR, tubeMinor, axis){
+      // axis: 'y' (default) wraps a vertical tube (post/foot); 'z' wraps a
+      // horizontal tube running along the rail direction (top rail).
+      // A slightly irregular tube radius (jittered per-segment via a low
+      // radial-tube-segment count plus non-uniform arc/pipe ratio) reads
+      // as a hand-finished weld pass instead of a perfectly round molded ring.
+      const bead = new THREE.Mesh(
+        new THREE.TorusGeometry(tubeR, tubeMinor * (0.92 + Math.random()*0.16), 7, 20),
+        weldMat
+      );
+      bead.position.copy(position);
+      if (axis === 'z') {
+        bead.rotation.y = Math.random()*Math.PI;
+      } else {
+        bead.rotation.x = Math.PI/2;
+        bead.rotation.z = Math.random()*Math.PI;
+      }
+      bead.castShadow = false;
+      bead.receiveShadow = false;
+      parent.add(bead);
+    }
+
+    const rackWidth  = 1.5;    // along the wall (z) — rail length, unchanged
+    const rackHeight = 1.92;   // top rail height, unchanged
+    const footSpan   = 0.25;   // how far each foot splays out from the center post (x), unchanged
+    const barR       = 0.033;  // heavier-gauge tube — thicker, more substantial profile
+
+    const rackGroup = new THREE.Group();
+    const windowClearance = 0.78; // ~2.6 ft off the window
+    const rackCenterX = halfW - windowClearance;
+    const rackCenterZ = 1.85;
+    rackGroup.position.set(rackCenterX, 0, rackCenterZ);
+    room.add(rackGroup);
+
+    // Helper: cylinder segment between two exact points, so joints always
+    // meet cleanly with no floating or clipping pieces.
+    function makeSegment(p1, p2, radius1, radius2, material, segs){
+      const dir = new THREE.Vector3().subVectors(p2, p1);
+      const len = dir.length();
+      const geo = new THREE.CylinderGeometry(radius1, radius2, len, segs || 24);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.copy(new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5));
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    const postTopY   = rackHeight - 0.05;   // where the post meets the corner fitting
+    const footTopY   = 0.16;                // where the post's straight run ends and the splayed feet begin
+    const shelfY     = 0.30;
+
+    // Each end of the rack (z = -halfWidth and +halfWidth): one straight
+    // center post, joined to the top rail by a welded corner fitting, with
+    // a collar at the shelf line and X-splayed feet shod in matching
+    // ferrules — tailored, welded contact points, not bare tube ends.
+    function buildEnd(z){
+      // vertical post, centered over the shelf (x = 0)
+      const post = makeSegment(
+        new THREE.Vector3(0, footTopY, z),
+        new THREE.Vector3(0, postTopY, z),
+        barR, barR, rackMat
+      );
+      rackGroup.add(post);
+
+      // corner fitting — a rounded knuckle joining post to top rail,
+      // the classic pipe-fitting hardware of a well-made boutique rack
+      const corner = new THREE.Mesh(new THREE.SphereGeometry(barR*1.85, 12, 10), brassMat);
+      corner.position.set(0, rackHeight, z);
+      corner.castShadow = false;
+      rackGroup.add(corner);
+      // weld seam where the post meets the corner knuckle
+      addWeldBead(rackGroup, new THREE.Vector3(0, rackHeight - barR*1.4, z), barR*1.05, barR*0.22);
+
+      // slim collar just below the corner, like a threaded sleeve
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.28, barR*1.28, 0.045, 12), brassMat);
+      collar.position.set(0, postTopY - 0.05, z);
+      collar.castShadow = false;
+      rackGroup.add(collar);
+
+      // collar at the shelf line, where the cross rail meets the post
+      const shelfCollar = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.3, barR*1.3, 0.04, 12), brassMat);
+      shelfCollar.position.set(0, shelfY, z);
+      shelfCollar.castShadow = false;
+      rackGroup.add(shelfCollar);
+      addWeldBead(rackGroup, new THREE.Vector3(0, shelfY, z), barR*1.32, barR*0.16);
+
+      // two feet, splayed fore and aft from the post's base — fully
+      // connected, floor-accurate contact points, shod in brass ferrules
+      [1, -1].forEach(dir=>{
+        const footTop = new THREE.Vector3(0, footTopY, z);
+        const footBottom = new THREE.Vector3(dir*footSpan, 0, z);
+        const footMid = footTop.clone().lerp(footBottom, 0.78);
+
+        const foot = makeSegment(footTop, footMid, barR*0.85, barR*0.72, rackMat);
+        rackGroup.add(foot);
+
+        // weld seam where each foot meets the base of the post
+        addWeldBead(rackGroup, footTop.clone().setY(footTop.y - barR*0.3), barR*0.95, barR*0.18);
+
+        // ferrule tip, shod at the very end of each foot
+        const ferrule = makeSegment(footMid, footBottom, barR*0.72, barR*0.62, brassMat, 16);
+        rackGroup.add(ferrule);
+        // weld seam where the ferrule is fitted onto the foot
+        addWeldBead(rackGroup, footMid, barR*0.75, barR*0.14);
+
+        const pad = new THREE.Mesh(new THREE.CylinderGeometry(barR*1.15, barR*1.15, 0.01, 10), brassMat);
+        pad.position.set(footBottom.x, 0.005, footBottom.z);
+        rackGroup.add(pad);
+
+        addContactShadow(rackGroup, footBottom.x, footBottom.z, 0.09, 0.09, 0.6);
+      });
+    }
+    buildEnd(-rackWidth/2);
+    buildEnd(rackWidth/2);
+
+    // Broad, very soft shadow under the whole footprint for extra grounding
+    addContactShadow(rackGroup, 0, 0, footSpan + 0.12, rackWidth/2 + 0.12, 0.28);
+
+    // Single top rail, centered directly over the shelf below
+    const topRail = new THREE.Mesh(new THREE.CylinderGeometry(barR, barR, rackWidth, 24), rackMat);
+    topRail.rotation.x = Math.PI/2;
+    topRail.position.set(0, rackHeight, 0);
+    topRail.castShadow = true;
+    rackGroup.add(topRail);
+    // weld seams where the top rail enters each corner knuckle
+    [-rackWidth/2 + barR*1.5, rackWidth/2 - barR*1.5].forEach(z=>{
+      addWeldBead(rackGroup, new THREE.Vector3(0, rackHeight, z), barR*1.02, barR*0.18, 'z');
+    });
+
+    // Cross rails connecting the front feet together and the back feet
+    // together at shelf height — fully joined to the splayed feet below.
+    const railFront = new THREE.Mesh(new THREE.CylinderGeometry(barR*0.8, barR*0.8, rackWidth, 20), rackMat);
+    railFront.rotation.x = Math.PI/2;
+    railFront.position.set(footSpan, shelfY, 0);
+    rackGroup.add(railFront);
+    const railBack = railFront.clone();
+    railBack.position.set(-footSpan, shelfY, 0);
+    rackGroup.add(railBack);
+
+    // Short vertical struts tying the shelf-height rails to the feet, so
+    // nothing between the splayed foot and the shelf rail floats unattached
+    [-rackWidth/2, rackWidth/2].forEach(z=>{
+      [1, -1].forEach(dir=>{
+        const strut = makeSegment(
+          new THREE.Vector3(dir*footSpan*0.55, footTopY*0.55, z),
+          new THREE.Vector3(dir*footSpan, shelfY, z),
+          barR*0.6, barR*0.6, rackMat
+        );
+        rackGroup.add(strut);
+        // weld seam where the strut meets the shelf-height cross rail
+        addWeldBead(rackGroup, new THREE.Vector3(dir*footSpan, shelfY, z), barR*0.85, barR*0.14);
+      });
+    });
+
+    // Shelf plate — gloss black lacquer with a thin matte-black steel edge
+    // trim, reading as a finished plinth rather than a bare panel, left empty.
+    const shelfMatRack = new THREE.MeshPhysicalMaterial({
+      color: 0x0b0b0d, roughness: 0.28, metalness: 0.12,
+      clearcoat: 0.75, clearcoatRoughness: 0.12, envMapIntensity: 0.85
+    });
+    const shelfWLocal = footSpan*2 - 0.03, shelfDLocal = rackWidth - 0.03;
+    const lowerShelf = new THREE.Mesh(new THREE.BoxGeometry(shelfWLocal, 0.016, shelfDLocal), shelfMatRack);
+    lowerShelf.position.set(0, shelfY, 0);
+    lowerShelf.castShadow = true;
+    lowerShelf.receiveShadow = true;
+    rackGroup.add(lowerShelf);
+
+    // Thin matte-black steel trim band wrapping the shelf edge
+    const trimH = 0.012;
+    const trimFront = new THREE.Mesh(new THREE.BoxGeometry(shelfWLocal + 0.008, trimH, 0.006), brassMat);
+    trimFront.position.set(0, shelfY - 0.006, shelfDLocal/2);
+    rackGroup.add(trimFront);
+    const trimBack = trimFront.clone();
+    trimBack.position.set(0, shelfY - 0.006, -shelfDLocal/2);
+    rackGroup.add(trimBack);
+    const trimLeft = new THREE.Mesh(new THREE.BoxGeometry(0.006, trimH, shelfDLocal + 0.008), brassMat);
+    trimLeft.position.set(shelfWLocal/2, shelfY - 0.006, 0);
+    rackGroup.add(trimLeft);
+    const trimRight = trimLeft.clone();
+    trimRight.position.set(-shelfWLocal/2, shelfY - 0.006, 0);
+    rackGroup.add(trimRight);
+  }
+
+  // ---------- Wildcard raglan shirts hanging on the rack ----------
+  // Five colorways from "The Full Deck," hung on simple black hangers along
+  // the rack's top rail. Hung tightly shingled (shoulder-to-shoulder) so
+  // each garment overlaps the next — only the sleeves and shoulder yoke of
+  // most shirts peek out, with the torso print mostly hidden behind its
+  // neighbor, the way a densely-hung boutique rack actually reads.
+  {
+    const shirtHangerMat = new THREE.MeshStandardMaterial({
+      color: 0x121212, roughness: 0.48, metalness: 0.08
+    });
+    const shirtFabricRoughMat_base = { roughness: 0.94, metalness: 0.0 };
+
+    // -- Premium heavyweight-cotton fabric bump map: a fine plain-weave
+    // crosshatch (tiled independently of the printed artwork, so the
+    // graphic itself stays perfectly sharp) plus a handful of stitched
+    // seam lines positioned where a real raglan tee's seams fall — collar
+    // rib, shoulder/raglan seams, side seams, and sleeve/hem cuffs. This
+    // is bump-only (grayscale), never touches the color map, so it adds
+    // real woven thickness and stitching without softening the design. --
+    function shirtFabricBumpTexture(seed){
+      const size = 512;
+      const k = size / 1024; // scales fixed-pixel details so the look matches the 1024 version
+      const c = document.createElement('canvas'); c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, size, size);
+
+      const rnd = makeSeededRng((seed || 1) * 9301 + 49297);
+
+      // fine plain-weave crosshatch — heavier/coarser pitch than a thin
+      // shirting fabric, reading as substantial heavyweight cotton jersey
+      const thread = 6.5 * k;
+      for (let y = 0; y < size; y += thread) {
+        const dark = (Math.floor(y / thread) % 2 === 0);
+        const a = 0.20 + rnd() * 0.10;
+        ctx.fillStyle = dark ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a})`;
+        ctx.fillRect(0, y, size, thread * 0.62);
+      }
+      for (let x = 0; x < size; x += thread) {
+        const dark = (Math.floor(x / thread) % 2 === 0);
+        const a = 0.13 + rnd() * 0.08;
+        ctx.fillStyle = dark ? `rgba(0,0,0,${a})` : `rgba(255,255,255,${a})`;
+        ctx.fillRect(x, 0, thread * 0.62, size);
+      }
+      // scattered heather flecks so the yarn itself reads as spun fiber
+      const fleckCount = Math.floor((size * size) / 700);
+      for (let i = 0; i < fleckCount; i++) {
+        const fx = rnd() * size, fy = rnd() * size;
+        const light = rnd() > 0.5;
+        ctx.fillStyle = light ? `rgba(255,255,255,${0.05 + rnd()*0.06})` : `rgba(0,0,0,${0.05 + rnd()*0.06})`;
+        ctx.fillRect(fx, fy, 1.6 * k, 1.6 * k);
+      }
+
+      // -- stitched seams: real double-pass thread rows (raised pass +
+      // recessed pass, slightly offset) rather than a single flat dash,
+      // placed at the collar rib, raglan shoulder seams, side seams, and
+      // sleeve/hem cuffs of the garment silhouette. --
+      function stitchLine(x1, y1, x2, y2, dash){
+        [ {w: 6.5 * k, col:'rgba(0,0,0,0.55)', off:0}, {w: 3.5 * k, col:'rgba(255,255,255,0.35)', off:2.6 * k} ].forEach(pass=>{
+          ctx.save();
+          ctx.setLineDash((dash || [7, 5]).map(d => d * k));
+          ctx.lineDashOffset = pass.off;
+          ctx.lineWidth = pass.w;
+          ctx.strokeStyle = pass.col;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+      function stitchArc(cx, cy, r, a1, a2, dash){
+        [ {w: 6.5 * k, col:'rgba(0,0,0,0.5)', off:0}, {w: 3.5 * k, col:'rgba(255,255,255,0.32)', off:2.6 * k} ].forEach(pass=>{
+          ctx.save();
+          ctx.setLineDash((dash || [7, 5]).map(d => d * k));
+          ctx.lineDashOffset = pass.off;
+          ctx.lineWidth = pass.w;
+          ctx.strokeStyle = pass.col;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, a1, a2);
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+
+      // collar rib — small arc centered near the top of the garment
+      stitchArc(size*0.5, size*0.115, size*0.11, Math.PI*0.15, Math.PI*0.85, [6,4]);
+      // raglan shoulder seams — diagonal from collar down to each sleeve
+      stitchLine(size*0.40, size*0.16, size*0.185, size*0.315);
+      stitchLine(size*0.60, size*0.16, size*0.815, size*0.315);
+      // side seams — near-vertical lines down each side of the torso
+      const sideJitterL = (rnd()-0.5)*0.02, sideJitterR = (rnd()-0.5)*0.02;
+      stitchLine(size*(0.225+sideJitterL), size*0.34, size*(0.255+sideJitterL), size*0.94, [8,5]);
+      stitchLine(size*(0.775+sideJitterR), size*0.34, size*(0.745+sideJitterR), size*0.94, [8,5]);
+      // sleeve/cuff hems — short horizontal stitch bands partway down each sleeve
+      stitchLine(size*0.10, size*0.40, size*0.235, size*0.40, [6,4]);
+      stitchLine(size*0.90, size*0.40, size*0.765, size*0.40, [6,4]);
+      // bottom hem
+      stitchLine(size*0.24, size*0.965, size*0.76, size*0.965, [8,5]);
+
+      const tex = new THREE.CanvasTexture(c);
+      return tex;
+    }
+
+    // Must mirror the clothing-rack geometry above exactly so the shirts sit
+    // correctly on its rail.
+    const shRackHeight = 1.92;
+    const shWindowClearance = 0.78;
+    const shRackCenterX = halfW - shWindowClearance;
+    const shRackCenterZ = 1.85;
+
+    const shirtsGroup = new THREE.Group();
+    shirtsGroup.position.set(shRackCenterX, 0, shRackCenterZ);
+    room.add(shirtsGroup);
+
+    function makeHangerSegment(p1, p2, radius){
+      const dir = new THREE.Vector3().subVectors(p2, p1);
+      const len = dir.length();
+      const geo = new THREE.CylinderGeometry(radius, radius, len, 10);
+      const mesh = new THREE.Mesh(geo, shirtHangerMat);
+      mesh.position.copy(new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5));
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+      mesh.castShadow = false;
+      return mesh;
+    }
+
+    // Hook geometry sits just over the top rail; the triangular neck/arms
+    // drop down to the shoulder tips where the garment actually hangs.
+    const hookTopY     = shRackHeight + 0.028;
+    const hookBottomY  = shRackHeight - 0.05;
+    const peakY        = hookBottomY - 0.045;
+    const shoulderTipY = peakY - 0.075;
+    const shoulderHalf = 0.165;
+
+    function buildHanger(parentGroup){
+      const hg = new THREE.Group();
+      // hook: a small bent loop over the rail
+      const hook = makeHangerSegment(
+        new THREE.Vector3(0, hookTopY, 0),
+        new THREE.Vector3(0, hookBottomY, 0),
+        0.0055
+      );
+      hg.add(hook);
+      const hookCurl = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.0055, 8, 14, Math.PI*1.3), shirtHangerMat);
+      hookCurl.position.set(0, hookTopY - 0.006, 0);
+      hookCurl.rotation.z = Math.PI * 0.15;
+      hookCurl.castShadow = false;
+      hg.add(hookCurl);
+
+      // neck: hook base down to the peak of the triangular frame
+      hg.add(makeHangerSegment(
+        new THREE.Vector3(0, hookBottomY, 0),
+        new THREE.Vector3(0, peakY, 0),
+        0.006
+      ));
+
+      // two angled arms down to the shoulder tips, where the shirt drapes
+      hg.add(makeHangerSegment(
+        new THREE.Vector3(0, peakY, 0),
+        new THREE.Vector3(shoulderHalf, shoulderTipY, 0),
+        0.0058
+      ));
+      hg.add(makeHangerSegment(
+        new THREE.Vector3(0, peakY, 0),
+        new THREE.Vector3(-shoulderHalf, shoulderTipY, 0),
+        0.0058
+      ));
+
+      parentGroup.add(hg);
+      return hg;
+    }
+
+    // Order along the rail (z) — each entry: [dataUri, local z, front/back
+    // depth offset]. Depth increases from the first (frontmost, nearest the
+    // camera) to the last (pushed slightly back), so each shirt's leading
+    // edge is covered by the one in front of it — a natural shingled hang.
+    const shirtDataUris = [
+      'images/image_020.webp',
+      'images/image_021.webp',
+      'images/image_022.webp',
+      'images/image_023.png',
+      'images/image_024.webp'
+    ];
+    const shirtZCenters = [-0.42, -0.21, 0, 0.21, 0.42];
+    const shirtDepthOffsets = [-0.06, -0.03, 0, 0.03, 0.06];
+    // Square plane, matches the square product photos. Sized generously (and
+    // positioned via garmentTopY below) so the collar/shoulder area of the
+    // fabric fully overlaps the hanger's hook and triangular frame — nothing
+    // of the hanger itself should peek out above the fabric.
+    const garmentSize = 1.08;
+
+    const shirtTexLoader = new THREE.TextureLoader();
+
+    // Explicit 2°–5° hanger yaw per shirt (converted to radians below) so no
+    // two hangers are ever perfectly parallel, and none sit dead straight.
+    const hangerYawDeg = [-3.4, 4.6, -2.3, 3.8, -4.9];
+    // Per-shirt cloth "weight" — a small multiplier so some shirts drape a
+    // touch heavier/looser than others, rather than every garment sagging
+    // by an identical amount.
+    const clothWeight = [1.08, 0.92, 1.15, 0.97, 1.05];
+
+    shirtDataUris.forEach(function(uri, i){
+      // Hanger for this garment, positioned along the rail
+      const hangerGroup = new THREE.Group();
+      hangerGroup.position.set(shirtDepthOffsets[i], 0, shirtZCenters[i]);
+      // Natural variance so the row doesn't look mechanically identical —
+      // each hanger sits at a slightly different yaw/tilt, as if hung by
+      // hand rather than placed by a machine.
+      const seedA = i*13.37 + 1.1, seedB = i*7.91 + 2.3, seedC = i*3.14 + 0.7;
+      const seedD = i*5.63 + 3.9,  seedE = i*9.17 + 0.4;
+      hangerGroup.rotation.y = hangerYawDeg[i] * Math.PI / 180;
+      hangerGroup.rotation.x = 0.016 * Math.sin(seedB);
+      hangerGroup.rotation.z = 0.018 * Math.sin(seedC);
+      shirtsGroup.add(hangerGroup);
+      buildHanger(hangerGroup);
+
+      // Garment mesh: a finely-segmented plane deformed so the sleeves hang
+      // with real gravity droop, a soft forward/back sway, subtle fabric
+      // folds, and a bit of left/right asymmetry — every shirt gets its own
+      // seeded variation so no two hang identically.
+      const segs = 28;
+      const geo = new THREE.PlaneGeometry(garmentSize, garmentSize, segs, segs);
+      const posAttr = geo.attributes.position;
+      const weight = clothWeight[i];
+      // Independent droop/angle bias for the left sleeve vs. the right
+      // sleeve on THIS shirt, so the two sides never mirror each other.
+      const leftSleeveBias  = 1 + 0.28 * Math.sin(seedD);
+      const rightSleeveBias = 1 + 0.28 * Math.sin(seedD + 2.1);
+      // Per-vertex baked-in ambient occlusion: creases, folds and the deep
+      // sleeve droop read a touch darker, the way real cloth self-shadows
+      // in its recesses — this is what actually sells "fabric" over "photo
+      // pasted on a flat card," since a printed product photo alone has no
+      // shading that responds to the garment's own drape.
+      const colorArr = new Float32Array(posAttr.count * 3);
+      for(let v=0; v<posAttr.count; v++){
+        const px = posAttr.getX(v);
+        const py = posAttr.getY(v);
+        const nx = px / (garmentSize/2);               // -1 .. 1 across the width
+        const ny = (py + garmentSize/2) / garmentSize;  // 0 at bottom .. 1 at top
+        const side = nx >= 0 ? 1 : -1;
+        const absnx = Math.abs(nx);
+        const sleeveBias = side > 0 ? rightSleeveBias : leftSleeveBias;
+
+        // 0 in the torso, ramping to 1 out at the sleeve edges
+        const sleeveFactor = Math.min(1, Math.max(0, (absnx - 0.22) / 0.7));
+        // 0 at the shoulder line, 1 at the hem/cuffs — gravity pulls hardest low down
+        const heightDroop = Math.pow(Math.max(0, 1 - ny), 1.25);
+        // each shirt's two sleeves droop by slightly different amounts
+        const asym = 1 + side * 0.22 * Math.sin(seedA);
+
+        // vertical sag: sleeves hang down and the hem settles under real
+        // cloth weight — scaled per-shirt and independently per sleeve
+        const droopY = -0.11 * garmentSize * weight * sleeveBias * sleeveFactor * heightDroop * asym;
+        // shoulder yoke dips gently at the center, just below the hanger tips
+        const shoulderDip = -0.022 * garmentSize * Math.cos(nx * Math.PI/2) * Math.pow(ny, 4);
+        // sleeves swing slightly forward/back rather than hanging perfectly flat —
+        // each sleeve gets its own swing angle
+        const swayZ = 0.055 * garmentSize * sleeveBias * sleeveFactor * heightDroop * side * (0.5 + 0.5*Math.sin(seedB + side*seedE));
+        // layered fabric folds — a broad drape fold plus finer wrinkling,
+        // each sleeve's fold phase offset independently
+        const fold1 = 0.013 * garmentSize * weight * Math.sin((ny*9 + seedC + side*seedD*0.3) * Math.PI) * (0.3 + 0.7*sleeveFactor);
+        const fold2 = 0.007 * garmentSize * Math.sin(nx*15 + seedB + side*seedE) * Math.cos(ny*5 + seedA);
+        const fold3 = 0.005 * garmentSize * sleeveBias * Math.sin(nx*9 - ny*7 + seedE + side*1.7) * sleeveFactor;
+        const bodyFold = 0.008 * garmentSize * Math.sin(nx*4 + ny*3 + seedC) * (1 - sleeveFactor);
+        // a touch of lateral drift as the sleeve falls, so it isn't a rigid mirror
+        const dx = side * 0.02 * garmentSize * sleeveBias * sleeveFactor * heightDroop * Math.sin(seedB*1.4 + side*seedD*0.5);
+
+        posAttr.setX(v, px + dx);
+        posAttr.setY(v, py + droopY + shoulderDip);
+        posAttr.setZ(v, swayZ + fold1 + fold2 + fold3 + bodyFold);
+
+        // Darken recessed folds and the underside of the sleeve droop;
+        // lightly brighten the high points where a fold catches the light.
+        // Scaling is deliberately gentle (kept within ~0.82–1.06) so it
+        // reads as cloth shading, not a painted-on shadow.
+        const foldDepth = (fold1 + fold3 + bodyFold) / garmentSize;
+        const creaseAO = 1 - Math.min(0.20, Math.abs(foldDepth) * 9.0 + heightDroop * sleeveFactor * 0.16);
+        const highlight = 1 + Math.max(0, (fold2 / garmentSize) * 3.5);
+        const shade = Math.min(1.06, Math.max(0.80, creaseAO * highlight));
+        colorArr[v*3+0] = shade;
+        colorArr[v*3+1] = shade;
+        colorArr[v*3+2] = shade;
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+      geo.computeVertexNormals();
+
+      const tex = shirtTexLoader.load(uri);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.anisotropy = 8;
+      // Independent bump-only fabric map: fine woven-cotton grain plus the
+      // stitched-seam pass baked full-frame over it. It shares the shirt's
+      // UVs but is a separate texture object, so it never touches — or
+      // softens — the printed artwork on the color map above.
+      const fabricBumpTex = shirtFabricBumpTexture(i + 1);
+      const garmentMat = new THREE.MeshStandardMaterial({
+        map: tex,
+        vertexColors: true,
+        bumpMap: fabricBumpTex,
+        bumpScale: 0.010,
+        transparent: true,
+        alphaTest: 0.5,
+        side: THREE.DoubleSide,
+        roughness: shirtFabricRoughMat_base.roughness,
+        metalness: shirtFabricRoughMat_base.metalness,
+        // Matte cotton jersey shouldn't pick up a strong studio-glossy sheen
+        // from the room's environment map — keeping this low is a big part
+        // of why the earlier version read as a shiny printed card rather
+        // than soft fabric.
+        envMapIntensity: 0.22
+      });
+      const garment = new THREE.Mesh(geo, garmentMat);
+      // The product photo has a few percent of transparent margin above the
+      // actual collar; placing the plane's top comfortably above the hook
+      // (rather than at the shoulder tips) means that opaque fabric — not
+      // just empty margin — is what ends up covering the hook and frame.
+      const garmentTopY = hookTopY + 0.028;
+      garment.position.set(0, garmentTopY - garmentSize/2, 0.014);
+      garment.castShadow = true;
+      garment.receiveShadow = true;
+      hangerGroup.add(garment);
+    });
+  }
+
+  // ---------- Floor plant: tall potted fiddle-leaf-style plant, tucked ----------
+  // ---------- behind the couch next to the clothing rack ----------
+  {
+    const potMat = new THREE.MeshStandardMaterial({ color: 0x8a4a2e, roughness: 0.85, metalness: 0.03 });
+    const potRimMat = new THREE.MeshStandardMaterial({ color: 0x6e3a24, roughness: 0.8, metalness: 0.03 });
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4330, roughness: 0.8, metalness: 0.02 });
+    const leafMatA = new THREE.MeshStandardMaterial({ color: 0x3f6b34, roughness: 0.6, metalness: 0.03 });
+    const leafMatB = new THREE.MeshStandardMaterial({ color: 0x4f7d3f, roughness: 0.6, metalness: 0.03 });
+    const leafMatC = new THREE.MeshStandardMaterial({ color: 0x35592c, roughness: 0.6, metalness: 0.03 });
+
+    const plantGroup = new THREE.Group();
+
+    // Pot — tapered cylinder with a slightly flared rim
+    const potH = 0.34, potR = 0.19;
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(potR * 0.82, potR, potH, 24), potMat);
+    pot.position.set(0, potH / 2, 0);
+    pot.castShadow = true; pot.receiveShadow = true;
+    plantGroup.add(pot);
+    const potRim = new THREE.Mesh(new THREE.CylinderGeometry(potR * 0.88, potR * 0.88, 0.03, 24), potRimMat);
+    potRim.position.set(0, potH - 0.01, 0);
+    plantGroup.add(potRim);
+
+    // Soil cap
+    const soil = new THREE.Mesh(new THREE.CylinderGeometry(potR * 0.78, potR * 0.78, 0.02, 20), trunkMat);
+    soil.position.set(0, potH + 0.005, 0);
+    plantGroup.add(soil);
+
+    // Two or three woody trunks rising from the soil, each bending slightly
+    const trunkDefs = [
+      { x: -0.03, z: 0.02, h: 1.35, tilt: 0.06 },
+      { x: 0.04,  z: -0.03, h: 1.18, tilt: -0.08 },
+      { x: -0.01, z: -0.05, h: 1.00, tilt: 0.10 }
+    ];
+    const trunkTops = [];
+    trunkDefs.forEach(td => {
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.020, td.h, 10), trunkMat);
+      trunk.position.set(td.x, potH + td.h / 2, td.z);
+      trunk.rotation.z = td.tilt;
+      trunk.rotation.x = td.tilt * 0.6;
+      trunk.castShadow = true;
+      plantGroup.add(trunk);
+      // world-ish top point for leaf clustering (approx, local space)
+      trunkTops.push({
+        x: td.x + Math.sin(td.tilt) * td.h * 0.5,
+        y: potH + td.h,
+        z: td.z + Math.sin(td.tilt * 0.6) * td.h * 0.5
+      });
+    });
+
+    // Broad, glossy leaves — flattened, slightly cupped spheres clustered
+    // near the top of each trunk, at varied heights and angles so the
+    // canopy reads as full without looking symmetrical or planted.
+    const leafMats = [leafMatA, leafMatB, leafMatC];
+    let leafSeed = 0;
+    trunkTops.forEach((top, ti) => {
+      const leafCount = 6 + (ti % 2);
+      for (let i = 0; i < leafCount; i++) {
+        leafSeed++;
+        const ang = (i / leafCount) * Math.PI * 2 + ti * 0.7;
+        const radius = 0.10 + (leafSeed % 3) * 0.03;
+        const dy = (leafSeed % 4) * 0.05 - 0.05;
+        const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.085 + (leafSeed % 3) * 0.01, 10, 8), leafMats[leafSeed % 3]);
+        leaf.scale.set(1, 1.35, 0.18);
+        leaf.position.set(
+          top.x + Math.cos(ang) * radius,
+          top.y + 0.10 + dy,
+          top.z + Math.sin(ang) * radius
+        );
+        leaf.rotation.y = ang;
+        leaf.rotation.x = 0.3 + (leafSeed % 3) * 0.15;
+        leaf.castShadow = true;
+        leaf.receiveShadow = true;
+        plantGroup.add(leaf);
+      }
+    });
+
+    // Placed off the rug, tucked into the corner formed by the east wall
+    // and the front wall — right beside the clothing rack.
+    const plantX = 2.70, plantZ = 3.55;
+    plantGroup.position.set(plantX, 0, plantZ);
+    room.add(plantGroup);
+
+    addContactShadow(room, plantX, plantZ, potR * 1.4, potR * 1.4, 0.34);
+  }
+
+  // ---------- Lighting ----------
+  // scene.environment (set above) already supplies soft, directionally-varied
+  // ambient to every material, so the hemisphere here only needs to add a
+  // faint sky/ground tint rather than do the heavy lifting itself.
+  // Raised from 0.11 for a brighter, softer ambient fill throughout the
+  // room — corners and under-furniture areas still read as shadow, just no
+  // longer crushed to near-black.
+  const hemi = new THREE.HemisphereLight(0x36457a, 0x1c1a24, 0.20);
+  scene.add(hemi);
+
+  // Blue-hour sky light — the sun itself has already set, so this stands in
+  // for the soft, cool residual skylight spilling through the window rather
+  // than a hard direct beam. Much dimmer and cooler than the daylight sun,
+  // with the same shadow setup so shapes stay crisp, just faint.
+  // Raised from 0.34 so it reads as a brighter key light overall, lifting
+  // the whole room rather than only rim-lighting the window side.
+  const sun = new THREE.DirectionalLight(0x7f96c9, 0.48);
+  sun.position.set(halfW + 3.2, winCenterY + 1.4, winCenterZ + 1.6);
+  sun.target.position.set(-halfW*0.3, 0, winCenterZ - 1.2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -5.5; sun.shadow.camera.right = 5.5;
+  sun.shadow.camera.top = 5.5;   sun.shadow.camera.bottom = -5.5;
+  sun.shadow.camera.near = 0.5;  sun.shadow.camera.far = 14;
+  sun.shadow.bias = -0.0008;
+  sun.shadow.radius = 3.8;              // widened from 2.4 for a softer, more diffused contact-shadow penumbra
+  scene.add(sun);
+  scene.add(sun.target);
+
+  // Deep-blue sky-fill, opposite the window, low and shadowless — mimics the
+  // dusk sky gently lifting the shadow side instead of leaving it dead-flat.
+  // Raised back up from 0.15 to gently lift the shadow side of the room
+  // now that the shadow-crush curve has been softened elsewhere.
+  const skyFill = new THREE.DirectionalLight(0x2f3a63, 0.26);
+  skyFill.position.set(-halfW - 1.5, H*0.8, -halfL*0.4);
+  skyFill.target.position.set(0, 0, 0);
+  scene.add(skyFill);
+  scene.add(skyFill.target);
+
+  // Cool bounce light — low, shadowless, seated near the polished floor to
+  // approximate dusk light reflecting back up off the floor (a real bounce card).
+  const bounceLight = new THREE.PointLight(0x3d4a75, 0.18, 7, 2);
+  bounceLight.position.set(halfW*0.1, 0.35, winCenterZ*0.3);
+  scene.add(bounceLight);
+
+  // Soft cool-blue point light near the window for local glow on walls/floor,
+  // with a faint violet warmth held over from the just-set sun.
+  // Raised further from 0.30 so the window edge/glass frame and nearby wall
+  // pick up a brighter, softer cool highlight, matching the room's overall
+  // brighter ambient level.
+  const glowLight = new THREE.PointLight(0x5f74ad, 0.42, 6, 2);
+  glowLight.position.set(halfW - 0.6, winCenterY, winCenterZ);
+  scene.add(glowLight);
+
+  // Halloween pumpkin-orange glow spilling into the room from the window,
+  // seated right alongside glowLight so it reads as light cast by whatever
+  // is outside the glass rather than a stray room light. Sits at zero
+  // intensity by default; the render loop below ramps it up only while the
+  // Halloween photo is faded in (windowSceneRefs.halloweenMat.opacity),
+  // and scales it up sharply with nightFactor so the glow is barely a
+  // whisper by day but genuinely vivid once the room goes dark.
+  const halloweenGlowLight = new THREE.PointLight(0xff7a1a, 0, 5.5, 2);
+  halloweenGlowLight.position.set(halfW - 0.5, winCenterY - 0.15, winCenterZ);
+  scene.add(halloweenGlowLight);
+  windowSceneRefs.halloweenGlowLight = halloweenGlowLight;
+
+  // Occasional lightning: a wide, shadowless, cool blue-white light seated
+  // just inside the window, at zero intensity by default. It never
+  // participates in the day/night lerp or the hover pulse — the render
+  // loop below simply spikes its intensity for a few frames whenever a
+  // strike fires, then lets it decay back to zero, so it can never leave
+  // the room's normal lighting in an altered state.
+  lightningLight = new THREE.PointLight(0xd7e4ff, 0, 11, 1.6);
+  lightningLight.position.set(halfW - 0.9, winCenterY + 0.6, winCenterZ);
+  scene.add(lightningLight);
+
+  // Expose refs so the sun/moon toggle (wired up in a separate script below)
+  // can smoothly animate the room's lighting between its night state (as
+  // authored above) and a warmer, brighter day state, without touching any
+  // of the lighting/material/shadow setup itself.
+  window.__roomDayNight = {
+    scene, renderer, hemi, sun, skyFill, bounceLight, glowLight, windowScene: windowSceneRefs,
+    // TV + monitor LED backlight refs (each has .led/.spill point lights and
+    // .glowMat) plus the purple/orange glow textures, exposed only so the
+    // Halloween toggle script below can swap their color — nothing else
+    // reads or writes these.
+    screenGlowRefs, purpleGlowTex, orangeGlowTex,
+    // 0 = night, 1 = full sun — written every frame by the day/night toggle
+    // script as it animates, and read every frame by the render loop below
+    // to drive the sunbeams, dust, table highlight, and card glints.
+    sunFactor: 0,
+    night: {
+      hemiSky: hemi.color.clone(), hemiGround: hemi.groundColor.clone(), hemiI: hemi.intensity,
+      sunColor: sun.color.clone(), sunI: sun.intensity, sunShadowRadius: sun.shadow.radius,
+      skyFillColor: skyFill.color.clone(), skyFillI: skyFill.intensity,
+      bounceColor: bounceLight.color.clone(), bounceI: bounceLight.intensity,
+      glowColor: glowLight.color.clone(), glowI: glowLight.intensity,
+      fogColor: scene.fog.color.clone(),
+      exposure: renderer.toneMappingExposure
+    },
+    day: {
+      hemiSky: new THREE.Color(0x9fd0ff), hemiGround: new THREE.Color(0x4a4437), hemiI: 0.75,
+      sunColor: new THREE.Color(0xfff4dd), sunI: 1.9, sunShadowRadius: 1.4,
+      skyFillColor: new THREE.Color(0xbcd6ef), skyFillI: 0.55,
+      bounceColor: new THREE.Color(0xd9c9a8), bounceI: 0.35,
+      glowColor: new THREE.Color(0xffe9bf), glowI: 0.55,
+      fogColor: new THREE.Color(0xcfe0ee),
+      exposure: 1.05
+    }
+  };
+
+  // ---------- Dust motes drifting in the light beam (signature detail) ----------
+  function moteTexture(){
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0,'rgba(255,250,235,0.9)');
+    g.addColorStop(1,'rgba(255,250,235,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+    return new THREE.CanvasTexture(c);
+  }
+  const moteCount = isMobilePerfTier ? 35 : 70;
+  const motePos = new Float32Array(moteCount*3);
+  const moteSpeed = [];
+  for(let i=0;i<moteCount;i++){
+    motePos[i*3+0] = -halfW*0.5 + Math.random()*halfW*1.1;
+    motePos[i*3+1] = Math.random()*H*0.85;
+    motePos[i*3+2] = winCenterZ - 1.5 + Math.random()*4.5;
+    moteSpeed.push(0.02 + Math.random()*0.05);
+  }
+  const moteGeo = new THREE.BufferGeometry();
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+  const moteMat = new THREE.PointsMaterial({
+    size: 0.028, map: moteTexture(), transparent:true, opacity:0.55,
+    blending: THREE.AdditiveBlending, depthWrite:false
+  });
+  const motes = new THREE.Points(moteGeo, moteMat);
+  scene.add(motes);
+  const moteBaseOpacity = moteMat.opacity; // held onto so sunFactor can scale up from this, not overwrite it
+
+  // ---------- Sunbeams stretching across the floor (sun-driven) ----------
+  // Two soft, tapered shafts of light running from the window's base out
+  // across the floor, angled to match sunDir (the same direction the sun
+  // disc/shadows already use). Fully transparent by default; the render
+  // loop below eases their opacity in with sunFactor so they only appear
+  // once the sun is up, brightening and fading with the same rhythm as
+  // everything else the sun touches in the room.
+  function sunbeamTexture(){
+    const w = 512, h = 128;
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.filter = 'blur(16px)';
+    ctx.fillStyle = 'rgba(255,246,220,1)';
+    ctx.fillRect(36, 26, w-72, h-52);
+    ctx.filter = 'none';
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.45)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+    return new THREE.CanvasTexture(c);
+  }
+  const beamTex = sunbeamTexture();
+  // Direction light actually travels into the room (opposite sunDir),
+  // flattened onto the floor — beams run along this heading from the
+  // window's base toward the room's interior.
+  const beamAngle = Math.atan2(-sunDir.z, -sunDir.x);
+  const sunbeamMats = [];
+  // y is nudged just above the checkerboard rug's top surface (rug sits at
+  // ~0.016) rather than the bare floor — the rug spans most of the room the
+  // beams cross, so keeping the beam plane below rug height buried it inside
+  // the rug's solid geometry and made the rays vanish exactly where they
+  // should read most clearly: on the pile in front of the window.
+  const beamOrigin = new THREE.Vector3(halfW - 0.35, 0.019, winCenterZ);
+  [
+    { len: 5.2, wid: 1.1, dz:  0.55, opacity: 0.30 },
+    { len: 4.2, wid: 0.85, dz: -0.75, opacity: 0.22 }
+  ].forEach(b => {
+    const mat = new THREE.MeshBasicMaterial({
+      map: beamTex, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, opacity: 0
+    });
+    mat.userData.targetOpacity = b.opacity;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(b.len, b.wid), mat);
+    mesh.position.copy(beamOrigin);
+    mesh.position.x -= (b.len/2) * Math.cos(-beamAngle);
+    mesh.position.z += (b.len/2) * Math.sin(-beamAngle) + b.dz;
+    mesh.rotation.x = -Math.PI/2;
+    mesh.rotation.z = -beamAngle;
+    scene.add(mesh);
+    sunbeamMats.push(mat);
+  });
+
+  // Halloween counterpart to the sunbeams above: a soft orange wash cast
+  // across the floor from the window, reusing the same beam texture but
+  // tinted pumpkin-orange. Zero opacity by default; the render loop drives
+  // it with the Halloween toggle's fade and boosts it heavily at night.
+  const halloweenBeamMat = new THREE.MeshBasicMaterial({
+    map: beamTex, color: 0xff7a1a, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0
+  });
+  const halloweenBeamMesh = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.6), halloweenBeamMat);
+  halloweenBeamMesh.position.copy(beamOrigin);
+  halloweenBeamMesh.position.x -= (4.6/2) * Math.cos(-beamAngle);
+  halloweenBeamMesh.position.z += (4.6/2) * Math.sin(-beamAngle);
+  halloweenBeamMesh.position.y = 0.018;
+  halloweenBeamMesh.rotation.x = -Math.PI/2;
+  halloweenBeamMesh.rotation.z = -beamAngle;
+  scene.add(halloweenBeamMesh);
+  windowSceneRefs.halloweenBeamMat = halloweenBeamMat;
+
+  // A tighter, brighter cluster of dust riding inside the beam corridor —
+  // reads as motes visibly "lighting up" where the sunbeam crosses them,
+  // distinct from the faint ambient motes above which drift everywhere.
+  const beamMoteCount = isMobilePerfTier ? 18 : 35;
+  const beamMotePos = new Float32Array(beamMoteCount*3);
+  const beamMoteSpeed = [];
+  const beamDir = new THREE.Vector3(-sunDir.x, 0, -sunDir.z).normalize();
+  for(let i=0;i<beamMoteCount;i++){
+    const s = Math.random()*4.5;
+    const spread = (Math.random()-0.5)*1.0;
+    beamMotePos[i*3+0] = beamOrigin.x - beamDir.x*s + (Math.random()-0.5)*0.3;
+    beamMotePos[i*3+1] = 0.15 + Math.random()*(H*0.55);
+    beamMotePos[i*3+2] = beamOrigin.z - beamDir.z*s + spread;
+    beamMoteSpeed.push(0.015 + Math.random()*0.04);
+  }
+  const beamMoteGeo = new THREE.BufferGeometry();
+  beamMoteGeo.setAttribute('position', new THREE.BufferAttribute(beamMotePos, 3));
+  const beamMoteMat = new THREE.PointsMaterial({
+    size: 0.034, map: moteTexture(), transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  const beamMotes = new THREE.Points(beamMoteGeo, beamMoteMat);
+  scene.add(beamMotes);
+
+  // ---------- Desk prop: mirrorless camera, set down mid product-shoot ----------
+  // Sits on the desk's back-left corner — clear of the notebook cluster and
+  // the monitor arms — as if someone just finished a shot and set it down.
+  {
+    const deskWallZ  = -halfL;
+    const deskSurfY  = 0.75 + 0.042/2; // matches deskTopY + deskThick/2 from the desk build
+    const camLocalX  = -1.28, camLocalZ = 0.24;
+    const camX = camLocalX;                       // desk is centered at x=0
+    const camZ = deskWallZ + 0.04 + camLocalZ;
+
+    const camGroup = new THREE.Group();
+    camGroup.position.set(camX, deskSurfY, camZ);
+    camGroup.rotation.y = 0.62;
+    room.add(camGroup);
+
+    const camBodyMat  = new THREE.MeshStandardMaterial({ color: 0x1c1b1a, roughness: 0.58, metalness: 0.12 });
+    const camGripMat  = new THREE.MeshStandardMaterial({ color: 0x131211, roughness: 0.82, metalness: 0.02 }); // rubberized grip, low sheen
+    const camPlateMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3c, roughness: 0.32, metalness: 0.65 }); // brushed top plate
+    const camBarrelMat= new THREE.MeshStandardMaterial({ color: 0x232323, roughness: 0.4,  metalness: 0.6  });
+    const camRingMat  = new THREE.MeshStandardMaterial({ color: 0x2e2e2e, roughness: 0.5,  metalness: 0.55 });
+    const camAccentMat= new THREE.MeshStandardMaterial({ color: 0xb0271e, roughness: 0.35, metalness: 0.3  }); // brand-red accent ring
+    const camGlassMat = new THREE.MeshPhysicalMaterial({ color: 0x18222c, roughness: 0.05, metalness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.06, envMapIntensity: 1.2 });
+    const camStrapMat = new THREE.MeshStandardMaterial({ color: 0x2b2723, roughness: 0.85, metalness: 0.0 });
+
+    // Body
+    const bodyW = 0.132, bodyH = 0.088, bodyD = 0.048;
+    const camBody = new THREE.Mesh(new THREE.BoxGeometry(bodyW, bodyH, bodyD), camBodyMat);
+    camBody.position.y = bodyH/2;
+    camBody.castShadow = false; camBody.receiveShadow = false;
+    camGroup.add(camBody);
+
+    // Rubberized grip, front-right corner
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.03, bodyH*0.92, bodyD*0.9), camGripMat);
+    grip.position.set(bodyW/2 - 0.012, bodyH/2, 0);
+    grip.castShadow = false;
+    camGroup.add(grip);
+
+    // Brushed top plate with mode dial and shutter button
+    const topPlate = new THREE.Mesh(new THREE.BoxGeometry(bodyW*0.98, 0.01, bodyD*0.9), camPlateMat);
+    topPlate.position.y = bodyH + 0.005;
+    topPlate.castShadow = false;
+    camGroup.add(topPlate);
+
+    const modeDial = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.008, 20), camRingMat);
+    modeDial.position.set(-bodyW*0.22, bodyH + 0.011, 0.005);
+    modeDial.castShadow = false;
+    camGroup.add(modeDial);
+
+    const shutterBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.006, 12), camAccentMat);
+    shutterBtn.position.set(bodyW*0.28, bodyH + 0.011, 0.012);
+    camGroup.add(shutterBtn);
+
+    // Small EVF hump, centered on the back
+    const evf = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.018, 0.03), camBodyMat);
+    evf.position.set(-0.01, bodyH + 0.009, -bodyD*0.12);
+    evf.castShadow = false;
+    camGroup.add(evf);
+
+    // Lens mount ring flush against the front face
+    const mount = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.004, 10, 24), camRingMat);
+    mount.rotation.x = Math.PI/2;
+    mount.position.set(-0.008, bodyH*0.52, -bodyD/2);
+    camGroup.add(mount);
+
+    // Lens barrel, extending out the front, gently tapered
+    const lensLen = 0.078;
+    const lensGroup = new THREE.Group();
+    lensGroup.position.set(-0.008, bodyH*0.52, -bodyD/2 - lensLen/2);
+    camGroup.add(lensGroup);
+
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.030, lensLen, 24), camBarrelMat);
+    barrel.rotation.x = Math.PI/2;
+    barrel.castShadow = false; barrel.receiveShadow = false;
+    lensGroup.add(barrel);
+
+    const focusRing = new THREE.Mesh(new THREE.CylinderGeometry(0.0285, 0.0285, 0.016, 24, 1, false), camRingMat);
+    focusRing.rotation.x = Math.PI/2;
+    focusRing.position.z = 0.008;
+    lensGroup.add(focusRing);
+
+    const accentRing = new THREE.Mesh(new THREE.TorusGeometry(0.0265, 0.0025, 8, 24), camAccentMat);
+    accentRing.rotation.x = Math.PI/2;
+    accentRing.position.z = lensLen/2 - 0.006;
+    lensGroup.add(accentRing);
+
+    const lensGlass = new THREE.Mesh(new THREE.CircleGeometry(0.0225, 24), camGlassMat);
+    lensGlass.position.z = lensLen/2 + 0.001;
+    lensGroup.add(lensGlass);
+
+    // Strap lugs and a softly draped fabric strap, as though just set down
+    const lugMat = camRingMat;
+    [[-bodyW/2 + 0.006, bodyD*0.42], [-bodyW/2 + 0.006, -bodyD*0.42]].forEach(([lx, lz])=>{
+      const lug = new THREE.Mesh(new THREE.TorusGeometry(0.006, 0.0018, 6, 12), lugMat);
+      lug.position.set(lx, bodyH*0.82, lz);
+      camGroup.add(lug);
+    });
+    const strapStart = new THREE.Vector3(-bodyW/2 + 0.006, bodyH*0.82, bodyD*0.42);
+    const strapMid   = new THREE.Vector3(-bodyW/2 - 0.05, bodyH*0.20, bodyD*0.65);
+    const strapEnd    = new THREE.Vector3(-bodyW/2 - 0.02, 0.002, bodyD*0.85);
+    const strapCurve = new THREE.CatmullRomCurve3([strapStart, strapMid, strapEnd]);
+    const strapTube = new THREE.Mesh(new THREE.TubeGeometry(strapCurve, 14, 0.009, 6, false), camStrapMat);
+    strapTube.castShadow = false;
+    camGroup.add(strapTube);
+
+    addContactShadow(room, camX, camZ, 0.16, 0.11, 0.55);
+
+    // Lens cap, set down beside the camera — the small tell that a lens was
+    // just swapped or a shot just wrapped
+    const capGroup = new THREE.Group();
+    capGroup.position.set(camX + 0.155, deskSurfY, camZ + 0.03);
+    capGroup.rotation.x = Math.PI/2;
+    room.add(capGroup);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.007, 20), camBodyMat);
+    capGroup.add(cap);
+    const capLogo = new THREE.Mesh(new THREE.CircleGeometry(0.009, 16), camAccentMat);
+    capLogo.position.z = 0.0036;
+    capGroup.add(capLogo);
+    addContactShadow(room, camX + 0.155, camZ + 0.03, 0.035, 0.035, 0.4);
+  }
+
+  // ---------- Shipping boxes, ready to go out — corner of the rug ----------
+  // ---------- nearest the TV/desk wall, tucked beside the clothing rack. ----------
+  // A small cluster: two boxes stacked, plus a couple more set down loose
+  // nearby, as though someone's mid-way through packing up an order.
+  {
+    function cardboardTexture(seed){
+      const w = 512, h = 384;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      const base = seed % 2 === 0 ? '#b98a55' : '#c2925c'; // slight lot-to-lot variation
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, w, h);
+      // Subtle mottled speckle
+      for(let i=0; i<3200; i++){
+        const x = Math.random()*w, y = Math.random()*h;
+        const v = Math.random()*0.14;
+        ctx.fillStyle = Math.random() > 0.5 ? `rgba(70,45,20,${v})` : `rgba(230,195,150,${v})`;
+        ctx.fillRect(x, y, 1.6, 1.6);
+      }
+      // Horizontal corrugation banding
+      ctx.globalAlpha = 0.10;
+      for(let y=0; y<h; y+=5){
+        ctx.fillStyle = (y/5)%2===0 ? '#7a5330' : '#c99a63';
+        ctx.fillRect(0, y, w, 2);
+      }
+      ctx.globalAlpha = 1;
+      const tex = new THREE.CanvasTexture(c);
+      tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+    function cardboardBumpTexture(){
+      const w = 512, h = 384;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, w, h);
+      for(let y=0; y<h; y+=5){
+        ctx.fillStyle = (y/5)%2===0 ? '#6b6b6b' : '#9a9a9a';
+        ctx.fillRect(0, y, w, 2);
+      }
+      const tex = new THREE.CanvasTexture(c);
+      return tex;
+    }
+    function shippingLabelTexture(name, street, cityLine){
+      const w = 320, h = 220;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#f5f2e9';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#cfc9b8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(3, 3, w-6, h-6);
+      // Address block lines
+      ctx.fillStyle = '#2c2620';
+      ctx.font = '700 15px Arial';
+      ctx.fillText('SHIP TO:', 16, 30);
+      ctx.font = '400 13px Arial';
+      [name, street, cityLine].forEach((l, i)=> ctx.fillText(l, 16, 52 + i*18));
+      // Barcode block near the bottom
+      let bx = 16;
+      const by = h - 46, bh = 34;
+      ctx.fillStyle = '#141210';
+      while(bx < w-16){
+        const bw = 1.5 + Math.random()*3.5;
+        ctx.fillRect(bx, by, bw, bh);
+        bx += bw + 1.5 + Math.random()*2.5;
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+
+    const tapeMat = new THREE.MeshStandardMaterial({ color: 0xcdbd97, roughness: 0.28, metalness: 0.02, transparent: true, opacity: 0.92 });
+    const rugTopY = 0.014 + 0.002; // rug thickness + its small floor offset
+
+    // Builds one taped-up box at floor/stack height `baseY`, optionally with
+    // a printed shipping label on its top or front face. Returns the world Y
+    // of its top face, so a second box can be stacked on top of it.
+    function buildShippingBox({ x, z, baseY, rotY, w, h, d, labelFace, labelText, tapeOnFront, seed }){
+      const boxMat = new THREE.MeshStandardMaterial({
+        map: cardboardTexture(seed || 0), bumpMap: cardboardBumpTexture(), bumpScale: 0.0015,
+        roughness: 0.92, metalness: 0.0
+      });
+      const group = new THREE.Group();
+      group.position.set(x, baseY + h/2, z);
+      group.rotation.y = rotY;
+      room.add(group);
+
+      const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat);
+      box.castShadow = true; box.receiveShadow = true;
+      group.add(box);
+
+      // Packing tape over the top seam, plus a strip down one side face
+      const tapeW = Math.min(0.06, d*0.22);
+      const tapeTop = new THREE.Mesh(new THREE.BoxGeometry(w + 0.002, 0.003, tapeW), tapeMat);
+      tapeTop.position.set(0, h/2 + 0.0016, 0);
+      group.add(tapeTop);
+      if(tapeOnFront !== false){
+        const tapeFront = new THREE.Mesh(new THREE.BoxGeometry(tapeW, 0.003, d*0.4), tapeMat);
+        tapeFront.rotation.z = Math.PI/2;
+        tapeFront.position.set(w/2 + 0.0016, h*0.28, 0);
+        group.add(tapeFront);
+      }
+
+      if(labelFace){
+        const labelMat = new THREE.MeshStandardMaterial({ map: shippingLabelTexture(labelText[0], labelText[1], labelText[2]), roughness: 0.55, metalness: 0.0 });
+        const lw = Math.min(0.155, w*0.42), lh = Math.min(0.11, d*0.4);
+        const label = new THREE.Mesh(new THREE.PlaneGeometry(lw, lh), labelMat);
+        if(labelFace === 'top'){
+          label.rotation.x = -Math.PI/2;
+          label.rotation.z = 0.08;
+          label.position.set(-w*0.15, h/2 + 0.0025, d*0.12);
+        } else { // front face
+          label.position.set(0.02, 0, d/2 + 0.0025);
+        }
+        group.add(label);
+      }
+
+      addContactShadow(room, x, z, w*0.75, d*0.75, 0.55);
+      return baseY + h;
+    }
+
+    // Corner of the rug closest to the TV/desk wall, on the same side as the
+    // clothing rack (rug spans x:[-2.95,2.95], z:[-1.84,2.85]; rack sits
+    // around x=2.27, z=[1.10,2.60]).
+    const clusterX = 2.55, clusterZ = -1.55;
+
+    // Base of the stack: the larger, already-labeled box — label moved to
+    // the front face since the second box now sits on top of it.
+    const box1Top = buildShippingBox({
+      x: clusterX, z: clusterZ, baseY: rugTopY, rotY: 0.34,
+      w: 0.44, h: 0.30, d: 0.34,
+      labelFace: 'front', labelText: ['J. Alden', '118 Foundry Lane', 'Portland, OR 97209'],
+      seed: 0
+    });
+
+    // Second box, stacked slightly askew on top, as if just set there
+    buildShippingBox({
+      x: clusterX + 0.03, z: clusterZ - 0.02, baseY: box1Top, rotY: 0.34 + 0.4,
+      w: 0.30, h: 0.22, d: 0.26,
+      labelFace: 'top', labelText: ['J. Alden', '118 Foundry Lane', 'Portland, OR 97209'],
+      tapeOnFront: false,
+      seed: 1
+    });
+
+    // A third box, set down loose just beside the stack
+    buildShippingBox({
+      x: clusterX - 0.62, z: clusterZ + 0.22, baseY: rugTopY, rotY: -0.22,
+      w: 0.40, h: 0.28, d: 0.30,
+      labelFace: 'top', labelText: ['M. Alden', '118 Foundry Lane', 'Portland, OR 97209'],
+      seed: 0
+    });
+
+    // A fourth, smaller box tucked in front of the stack
+    buildShippingBox({
+      x: clusterX + 0.15, z: clusterZ + 0.48, baseY: rugTopY, rotY: 0.62,
+      w: 0.24, h: 0.19, d: 0.21,
+      labelFace: false, labelText: null,
+      seed: 1
+    });
+  }
+
+  // ---------- Interaction: drag to look, gentle idle drift ----------
+  let dragging = false, lastX=0, lastY=0;
+  let dragDistance = 0; // accumulated pointer movement since mousedown, used to
+                         // tell a genuine click on the table apart from a drag
+  let idleTimer = 0;
+
+  // Smooth "settle": when the visitor lets go, ease from wherever they left
+  // the view back onto the idle drift track instead of snapping to it — the
+  // way a camera operator gently retakes a slider rather than yanking it.
+  let returnT = 1;             // 1 = fully riding the idle track, 0 = just released
+  const RETURN_DURATION = 3.8; // seconds to ease back in — slow and cinematic
+  let releasePos = camStart.clone();
+  let releaseYaw = yawStart, releasePitch = pitchStart, releaseRoll = 0;
+  let currentRoll = 0;
+
+  // True from the moment the Enter transition begins — freezes look-around
+  // and hands the camera over to the scripted fly-in toward the center
+  // monitor for the remainder of the visit.
+  let entering = false;
+  // 1 = cards are blowing off the coffee table (camera holds/dollies gently),
+  // 2 = the camera is diving toward the center monitor.
+  let enterStage = 0;
+
+  // Look-around limits, trimmed a touch tighter than a full range so the
+  // room's main framing (window corner, TV, floor plant) never scrolls
+  // entirely out of view — comfortable to look around without over-rotating.
+  // Pitch is trimmed on both ends so you can still glance up/down but can't
+  // tip into staring at ceiling or floor; up is trimmed more since there's
+  // nothing up there to look at.
+  // Mobile-only: opened up slightly further than desktop so a drag has a
+  // touch more room on the left side too.
+  const YAW_LOOK_LEFT   = yawStart - (isMobileStartViewport ? 1.15 : 1.0);
+  // Mobile-only: the rack sits further out of frame at this camera's tighter
+  // FOV and shifted start position, so the rightward pan limit is opened up
+  // further than desktop's to let a drag actually swing far enough to bring
+  // every shirt on the rack into view.
+  const YAW_LOOK_RIGHT  = yawStart + (isMobileStartViewport ? 0.85 : 0.52);
+  const PITCH_LOOK_UP   = 0.27;
+  const PITCH_LOOK_DOWN = -0.33;
+
+  // Pointer-driven look target. `yaw`/`pitch` (declared above, used for all
+  // rendering) now trail this target with damped, frame-rate-independent
+  // easing rather than snapping straight to the cursor — a light "camera
+  // operator" lag that reads as smooth, weighted glass instead of a rigid
+  // 1:1 mouse-follow. See the drag branch of the main animate loop.
+  let targetYaw = yaw, targetPitch = pitch;
+
+  // How quickly the rendered yaw/pitch catches up to the pointer target
+  // while dragging (used as 1 - exp(-dt * DRAG_CATCHUP) each frame further
+  // down). Lower = more inertia/lag, higher = snappier and more direct.
+  const DRAG_CATCHUP = 8;
+
+  // Slightly reduced sensitivity for calmer, more precise control.
+  // Mobile-only: touch drags typically cover less screen distance than a
+  // mouse move, so the base sensitivity is scaled up on mobile to make
+  // looking around feel equally responsive. Desktop's values are untouched.
+  const MOBILE_LOOK_SENSITIVITY_SCALE = 1.6;
+  const YAW_SENSITIVITY   = 0.0026 * (isMobileStartViewport ? MOBILE_LOOK_SENSITIVITY_SCALE : 1);
+  const PITCH_SENSITIVITY = 0.0022 * (isMobileStartViewport ? MOBILE_LOOK_SENSITIVITY_SCALE : 1);
+
+  // Smoothed angular velocity of the pointer target, used only to give a
+  // release-mid-flick a touch of momentum rather than stopping dead.
+  let yawVel = 0, pitchVel = 0;
+  let prevFrameTargetYaw = targetYaw, prevFrameTargetPitch = targetPitch;
+
+  function onDown(x,y){
+    if(entering) return;
+    dragging = true; lastX=x; lastY=y; dragDistance = 0;
+    // Start the pointer target from wherever the rendered view currently
+    // sits (which may still be mid-ease back onto the idle track) so the
+    // very first drag frame never jumps.
+    targetYaw = prevFrameTargetYaw = yaw;
+    targetPitch = prevFrameTargetPitch = pitch;
+    yawVel = 0; pitchVel = 0;
+    document.body.classList.add('dragging');
+    renderer.domElement.style.cursor = '';
+  }
+  function onMove(x,y){
+    if(!dragging) return;
+    const dx = x - lastX, dy = y - lastY;
+    lastX = x; lastY = y;
+    dragDistance += Math.hypot(dx, dy);
+    // Drag right -> look right, drag down -> look down: both axes now share
+    // one natural, non-inverted convention (previously the horizontal axis
+    // was inverted relative to the vertical one, which read as backwards).
+    targetYaw   += dx * YAW_SENSITIVITY;
+    targetPitch -= dy * PITCH_SENSITIVITY;
+    targetPitch = Math.max(PITCH_LOOK_DOWN, Math.min(PITCH_LOOK_UP, targetPitch));
+    targetYaw   = Math.max(YAW_LOOK_LEFT, Math.min(YAW_LOOK_RIGHT, targetYaw));
+    idleTimer = 0;
+  }
+  function onUp(){
+    if(dragging){
+      releasePos.copy(camera.position);
+      // Project a touch of the release velocity forward before handing off
+      // to the smooth ease-back onto the idle track, so letting go reads as
+      // a gentle coast-to-stop rather than the view stopping dead.
+      const MOMENTUM_CARRY = 0.16; // seconds of velocity projected forward
+      releaseYaw   = Math.max(YAW_LOOK_LEFT,   Math.min(YAW_LOOK_RIGHT,  yaw   + yawVel   * MOMENTUM_CARRY));
+      releasePitch = Math.max(PITCH_LOOK_DOWN, Math.min(PITCH_LOOK_UP,   pitch + pitchVel * MOMENTUM_CARRY));
+      releaseRoll = currentRoll;
+      returnT = 0;
+      yawVel = 0; pitchVel = 0;
+    }
+    dragging = false;
+    document.body.classList.remove('dragging');
+  }
+
+  renderer.domElement.addEventListener('mousedown', e=>onDown(e.clientX, e.clientY));
+  window.addEventListener('mousemove', e=>onMove(e.clientX, e.clientY));
+  window.addEventListener('mouseup', onUp);
+  renderer.domElement.addEventListener('touchstart', e=>{ const t=e.touches[0]; onDown(t.clientX,t.clientY); }, {passive:true});
+  window.addEventListener('touchmove', e=>{ const t=e.touches[0]; onMove(t.clientX,t.clientY); }, {passive:true});
+  window.addEventListener('touchend', onUp);
+
+  // A window drag-resize can fire this event many times per second; each
+  // call used to run renderer.setSize() synchronously, which reallocates
+  // the WebGL framebuffer every single time. Coalescing to one resize per
+  // animation frame (via rAF) keeps the same end result — the canvas is
+  // still resized live as you drag, just without doing that expensive
+  // reallocation more often than the screen can even show a new frame.
+  let resizePending = false;
+  function applyResize(){
+    resizePending = false;
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.fov = fovForAspect(camera.aspect);
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    if(composer){
+      const pr = renderer.getPixelRatio();
+      composer.setSize(window.innerWidth * pr, window.innerHeight * pr);
+      if(bloomComposer) bloomComposer.setSize(window.innerWidth * pr * BLOOM_RES_SCALE, window.innerHeight * pr * BLOOM_RES_SCALE);
+      if(bloomPass) bloomPass.setSize(window.innerWidth * pr * BLOOM_RES_SCALE, window.innerHeight * pr * BLOOM_RES_SCALE);
+      if(finalPass) finalPass.uniforms.tBloom.value = bloomComposer.renderTarget2.texture;
+    }
+  }
+  window.addEventListener('resize', ()=>{
+    if(resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(applyResize);
+  });
+
+  // ---------- Enter button ----------
+  // Called when the "Enter" button is pressed. Everything still launches
+  // together — the cards lift off the table, the camera begins its push
+  // toward the center monitor, and the whoosh/streaks begin — but now as
+  // one unhurried, continuous camera move rather than a sudden detonation.
+  // The dive itself takes a couple of seconds: a gentle ease into motion,
+  // a smooth glide through the middle where it's moving fastest, and a
+  // soft ease *back down* as the monitor fills the frame, so the camera
+  // arrives rather than slams to a stop. Right as the camera settles onto
+  // the screen the view whites out, the landing page loads underneath
+  // unseen, and the flash fades to reveal it filling the screen — a soft
+  // cut hidden inside a gentle bloom reads as seamless.
+
+  const CARD_BLOW_DURATION = 1.1; // seconds — cards lift and drift outward at an unhurried pace
+  const FLIGHT_DURATION = 2.4;    // seconds, camera flight into the monitor — slow, cinematic glide
+  const TRAIL_CARD_W = 0.063;      // matches the coffee-table card width, used only for the blur streak size
+
+  // Physical size of the center monitor's screen (must match monW/monH/
+  // bezelInset back where the monitors are built: 0.92 x 0.53 with a 0.05
+  // bezel inset). Used to work out the distance at which the screen fills
+  // the frame — the camera's actual landing spot is zoomed in a bit
+  // closer than this (see CLEAN_ZOOM_FACTOR below) so the bezel is well
+  // outside the shot by the time it cuts, not just barely at its edge.
+  const MONITOR_SCREEN_W = 0.92 - 0.05;
+  const MONITOR_SCREEN_H = 0.53 - 0.05;
+
+  // The distance from a flat plane of size (screenW x screenH) at which it
+  // exactly fills the camera frustum: the tighter of the width-fit and
+  // height-fit distances, so the screen fully covers the frame with
+  // nothing left over — a clean "replace the screen" landing rather than
+  // overshooting past it.
+  function screenFillDistance(fovDeg, aspect, screenW, screenH){
+    const vFov = fovDeg * Math.PI / 180;
+    const dHeight = (screenH / 2) / Math.tan(vFov / 2);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+    const dWidth = (screenW / 2) / Math.tan(hFov / 2);
+    return Math.min(dHeight, dWidth);
+  }
+  function monitorFillDistance(fovDeg, aspect){
+    return screenFillDistance(fovDeg, aspect, MONITOR_SCREEN_W, MONITOR_SCREEN_H);
+  }
+  // Same idea as monitorFillDistance, but for the phone's much smaller
+  // screen — used only by the mobile-only dive (see updateMobileEnterFlightCamera).
+  function phoneFillDistance(fovDeg, aspect){
+    return screenFillDistance(fovDeg, aspect, phoneScreenW, phoneScreenD);
+  }
+
+  // Landing exactly at the mathematical fill distance cuts it too close —
+  // a stray frame of rAF drift relative to the setTimeout that fires the
+  // flash can leave a hairline of bezel still visible right as the screen
+  // whites out, which reads as an unclean pop rather than a smooth dive.
+  // Zooming in this much further than the exact fill point guarantees the
+  // bezel (and the frame around it) is comfortably outside the camera's
+  // view well before the cut, with margin to spare against any timing
+  // jitter.
+  const CLEAN_ZOOM_FACTOR = 0.86;
+
+  // Same margin, but for the mobile-only dive into the phone's screen —
+  // zooming in this much further than the exact fill point guarantees the
+  // phone's frame/bezel is comfortably outside the shot before the hard
+  // cut to the landing page fires (see updateMobileEnterFlightCamera and
+  // the mobile branch of startEnterSequence).
+  const PHONE_CLEAN_ZOOM_FACTOR = 0.86;
+
+  // Roughly the center of the card pile in the table's local space (matches
+  // the "carpet" scatter's own center below), used as the origin the burst
+  // radiates outward from.
+  const CARD_BLOW_CENTER = new THREE.Vector3(-0.32, 0, 0.02);
+
+  // ---------- Pressure wave ----------
+  // A visible shockwave ring that detonates from the coffee table the
+  // instant Enter is pressed and sweeps outward across the whole room. The
+  // cards don't just blow up on their own — they launch as the wave's
+  // leading edge physically reaches them, so the burst reads as caused by
+  // something passing through the room rather than every card just
+  // deciding to move at once.
+  const WAVE_SPEED = 4.2;      // m/s the ripple's leading edge travels at — an unhurried sweep
+  const WAVE_LIFE = 0.9;       // seconds the visible ring itself is on screen
+  const waveOrigin = new THREE.Vector3(); // filled in once the table exists (world space)
+
+  const waveGeom = new THREE.RingGeometry(0.86, 1, 96);
+  const waveMat = new THREE.MeshBasicMaterial({
+    color: 0xfff2d6, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const pressureWaveMesh = new THREE.Mesh(waveGeom, waveMat);
+  pressureWaveMesh.rotation.x = -Math.PI / 2; // lie flat, sweeping across the floor
+  pressureWaveMesh.visible = false;
+  pressureWaveMesh.renderOrder = 998;
+  scene.add(pressureWaveMesh);
+
+  // A second, taller vertical ring so the wave also reads as a wall of
+  // pressure brushing past furniture/walls at eye level, not just a ripple
+  // on the floor.
+  const waveGeomV = new THREE.RingGeometry(0.86, 1, 96, 1, 0, Math.PI); // half-ring, front half only
+  const waveMatV = new THREE.MeshBasicMaterial({
+    color: 0xfff2d6, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const pressureWaveMeshV = new THREE.Mesh(waveGeomV, waveMatV);
+  pressureWaveMeshV.visible = false;
+  pressureWaveMeshV.renderOrder = 998;
+  scene.add(pressureWaveMeshV);
+
+  let waveElapsed = 0;
+  let waveActive = false;
+
+  function beginPressureWave(){
+    if(tableGroupRef) tableGroupRef.localToWorld(waveOrigin.copy(CARD_BLOW_CENTER).setY(0.02));
+    waveElapsed = 0;
+    waveActive = true;
+    pressureWaveMesh.position.set(waveOrigin.x, 0.03, waveOrigin.z);
+    pressureWaveMeshV.position.set(waveOrigin.x, 1.05, waveOrigin.z);
+    pressureWaveMesh.visible = true;
+    pressureWaveMeshV.visible = true;
+    waveMat.opacity = 0;
+    waveMatV.opacity = 0;
+  }
+
+  // The ring's radius grows fast and linearly (a shockwave doesn't ease in
+  // or out — it just travels), while its opacity blooms in almost
+  // instantly and then fades across its remaining lifetime so it reads as
+  // a bright leading edge rather than a static glowing hoop.
+  function updatePressureWave(dt){
+    if(!waveActive) return;
+    waveElapsed += dt;
+    const life = Math.min(1, waveElapsed / WAVE_LIFE);
+    const radius = 0.15 + WAVE_SPEED * waveElapsed;
+    const thickness = 0.5 + radius * 0.22;
+    const innerR = Math.max(0.02, radius - thickness);
+    pressureWaveMesh.geometry.dispose();
+    pressureWaveMesh.geometry = new THREE.RingGeometry(innerR, radius, 96);
+    pressureWaveMeshV.geometry.dispose();
+    pressureWaveMeshV.geometry = new THREE.RingGeometry(innerR, radius, 96, 1, 0, Math.PI);
+    const bloom = Math.min(1, waveElapsed / 0.18);
+    const fade = 1 - Math.pow(life, 1.6);
+    const alpha = bloom * fade * 0.55;
+    waveMat.opacity = alpha;
+    waveMatV.opacity = alpha * 0.6;
+    if(life >= 1){
+      waveActive = false;
+      pressureWaveMesh.visible = false;
+      pressureWaveMeshV.visible = false;
+    }
+  }
+
+  // Gentle ease-out drift: the cards lift off with a soft push, cover
+  // most of their travel at a calm, even pace, and settle as they slow —
+  // used for the card lift so it reads as things quietly drifting off the
+  // table rather than a violent burst.
+  function easeAccelerate(p){
+    return 1 - Math.pow(1 - p, 3);
+  }
+
+  // Shared streak geometry/material for the cheap "motion blur" trail
+  // rendered behind each card as it launches — a thin additive plane
+  // stretched along the card's travel direction and faded by speed, which
+  // reads as blur without a full post-processing pass.
+  const cardTrailGeom = new THREE.PlaneGeometry(1, 1);
+  function makeCardTrailTexture(){
+    const c = document.createElement('canvas');
+    c.width = 8; c.height = 64;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(1, 'rgba(255,255,255,0.95)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 8, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+  const cardTrailTex = makeCardTrailTexture();
+
+  let blowElapsed = 0;
+  let cardBlowData = [];
+
+  function beginCardBlow(){
+    blowElapsed = 0;
+
+    cardBlowData = looseTableCards.map(entry => {
+      const dx = entry.basePos.x - CARD_BLOW_CENTER.x;
+      const dz = entry.basePos.z - CARD_BLOW_CENTER.z;
+      // Outward direction with a little randomness so the burst reads as a
+      // real gust catching a loose pile rather than a perfectly mechanical
+      // radial explosion.
+      const jitterAng = (Math.random()-0.5)*0.7;
+      const baseAng = Math.atan2(dz, dx) + jitterAng;
+      const trail = new THREE.Mesh(cardTrailGeom, new THREE.MeshBasicMaterial({
+        map: cardTrailTex, color: 0xfff6e2, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+      }));
+      trail.renderOrder = 999;
+      entry.mesh.parent.add(trail);
+      // How far this card sits from the blast center, converted into how
+      // long the pressure wave's leading edge takes to physically reach
+      // it — cards right at the center kick off almost immediately, cards
+      // out at the edge of the pile hang still for a beat until the wave
+      // sweeps under them, same as everything else in its path.
+      const distFromCenter = Math.hypot(dx, dz);
+      const waveDelay = distFromCenter / WAVE_SPEED;
+      return {
+        mesh: entry.mesh,
+        trail: trail,
+        basePos: entry.basePos,
+        travel: 0.7 + Math.random()*0.9,        // a calm outward drift, not a violent launch
+        rise: 0.3 + Math.random()*0.5,
+        dirX: Math.cos(baseAng),
+        dirZ: Math.sin(baseAng),
+        prevDist: 0,
+        waveDelay: waveDelay,
+        spinX: (Math.random()-0.5)*7,           // slow, lazy tumbling
+        spinY: (Math.random()-0.5)*7,
+        spinZ: (Math.random()-0.5)*7
+      };
+    });
+  }
+
+  const _trailDir = new THREE.Vector3();
+  const _trailUp = new THREE.Vector3(0, 1, 0);
+
+  // Cards lift and drift outward off the table with a soft ease-out —
+  // quick to start moving, then settling as they slow — trailing a short
+  // additive streak that stretches with instantaneous speed to fake
+  // motion blur.
+  function updateCardBlow(dt){
+    blowElapsed += dt;
+    let maxP = 0;
+    for(const d of cardBlowData){
+      // Nothing happens to this card until the wave's leading edge has
+      // physically swept past its position — before that it just sits on
+      // the table, still and untouched.
+      const localElapsed = Math.max(0, blowElapsed - d.waveDelay);
+      const p = Math.min(1, localElapsed / CARD_BLOW_DURATION);
+      if(p > maxP) maxP = p;
+      const e = easeAccelerate(p);
+      const fade = 1 - Math.min(1, Math.max(0, (p - 0.82) / 0.18)); // quick fade right at the very end
+      const dist = d.travel * e;
+      const rise = d.rise * Math.pow(p, 0.6);
+      d.mesh.position.set(
+        d.basePos.x + d.dirX * dist,
+        d.basePos.y + rise,
+        d.basePos.z + d.dirZ * dist
+      );
+      if(p > 0){
+        d.mesh.rotation.x += d.spinX * dt;
+        d.mesh.rotation.y += d.spinY * dt;
+        d.mesh.rotation.z += d.spinZ * dt;
+      }
+
+      // Motion-blur streak: stretched along this frame's actual travel,
+      // so it lengthens exactly with how far the card just moved.
+      const stepDist = Math.max(0, dist - d.prevDist);
+      d.prevDist = dist;
+      const dirVec = _trailDir.set(d.dirX, 0.35, d.dirZ).normalize();
+      const streakLen = Math.min(0.5, stepDist * 5.5);
+      d.trail.position.copy(d.mesh.position).addScaledVector(dirVec, -streakLen * 0.5);
+      d.trail.quaternion.setFromUnitVectors(_trailUp, dirVec);
+      d.trail.scale.set(TRAIL_CARD_W * 0.7, Math.max(0.0001, streakLen), 1);
+      d.trail.material.opacity = Math.min(0.85, stepDist * 9) * fade;
+    }
+    updatePressureWave(dt);
+    return maxP;
+  }
+
+  let flightElapsed = 0;
+  const flightStartPos = new THREE.Vector3();
+  const flightTargetPos = new THREE.Vector3();
+  // A control point used to bend the straight-line dive into a curve that
+  // banks around to arrive traveling straight along the screen's own
+  // normal — see beginCameraFlight/quadBezier below.
+  const flightControlPos = new THREE.Vector3();
+  let flightStartFov = camera.fov;
+
+  // The camera holds still for this long after Enter is pressed — a
+  // short breath of anticipation — before it begins easing into motion.
+  // This is no longer a hard "hold, then a shot": the camera itself eases
+  // out of this pause smoothly (see easeLaunch below), so nothing pops.
+  const LAUNCH_DELAY = 0.18; // brief held beat before the camera eases into its glide
+
+  // On top of the clean-zoom margin above, a touch more push right at the
+  // very end — small enough it never eats into that margin, just enough
+  // for the camera's final settle to feel like it drifts to rest exactly
+  // on the screen rather than stopping a hair short.
+  const OVERSHOOT_DIST = 0.004;
+
+  // ---------- Mobile-only detour: monitor, then down onto the desk phone ----------
+  // On narrow (portrait) viewports the Enter dive gains three extra beats:
+  // the camera first curves toward the center monitor exactly like the
+  // desktop version does — banking around to line up square with the
+  // screen as it closes in, so it genuinely reads as diving toward the
+  // monitor — then, with no hold in between, arcs straight up and over off
+  // the monitor and down onto the phone sitting on the desk, and finally
+  // dives on into the phone's screen until it fills the entire frame.
+  // Unlike the desktop dive, there's no white flash covering the cut: the
+  // landing page is preloaded invisibly during the dive and swapped in
+  // with a hard, instant cut the moment the phone's screen fills the
+  // frame, so it reads as the camera passing straight through the screen
+  // into the next page. Desktop is untouched — flightIsMobile is
+  // re-checked fresh every time the flight begins, and none of this code
+  // path runs unless it's true.
+  function isMobileFlightViewport(){
+    return window.innerWidth < window.innerHeight;
+  }
+  let flightIsMobile = false;
+  const flightPhoneWorldPos = new THREE.Vector3();
+  const flightPhoneHoverPos = new THREE.Vector3();
+  // How far along the straight line toward the monitor the mobile dive's
+  // first leg stops — close enough to filling the frame with it that it
+  // genuinely reads as "about to load into this screen," fooling the
+  // viewer into expecting the same cut the desktop version does, right
+  // before it pans away to the phone instead.
+  const flightMonitorApproachPos = new THREE.Vector3();
+  const MOBILE_MONITOR_APPROACH_FRACTION = 0.93;
+  // Where the mobile dive's final leg ends: straight up the phone screen's
+  // own normal from its surface, at the distance where it exactly fills
+  // the frame (same margin the desktop dive uses for the monitor).
+  // Computed once per flight in beginCameraFlight().
+  const flightPhoneFillPos = new THREE.Vector3();
+  // Control point for leg 4's curve (phone hover -> phone fill) — sits
+  // further out along the screen's own normal than flightPhoneFillPos, the
+  // same trick used for the desktop monitor dive, so the camera banks
+  // around to arrive traveling straight down, perpendicular to the
+  // screen — its edges land exactly parallel to the frame's edges instead
+  // of at an angle, so the cut to the landing page is seamless.
+  const flightPhoneDiveControlPos = new THREE.Vector3();
+  // Control point for leg 3's curve (monitor approach -> phone hover) — see
+  // beginCameraFlight, where it's placed above the straight line between
+  // the two so the camera arcs up and over rather than cutting a straight
+  // diagonal across the room.
+  const flightPanControlPos = new THREE.Vector3();
+  const _bankedLookAt = new THREE.Vector3();
+
+  // Durations (seconds) for each leg of the mobile-only detour. Together
+  // with LAUNCH_DELAY these replace FLIGHT_DURATION as the mobile flight's
+  // total length, so the external flash/navigation timers (set up in
+  // startEnterSequence) stay perfectly in sync with what the camera is
+  // actually doing.
+  // Runs the exact same duration + easing formula as desktop's dive (see
+  // updateEnterFlightCamera) up through this point — MOBILE_DIVE_TO_MONITOR_DURATION
+  // is simply the moment that shared curve reaches MOBILE_MONITOR_APPROACH_FRACTION
+  // of the way there. Camera position/orientation for t in
+  // [0, MOBILE_DIVE_TO_MONITOR_DURATION] is therefore pixel-identical to what
+  // desktop's dive would show at the same elapsed time; only what happens
+  // after this point (peeling off toward the phone) differs.
+  const MOBILE_DIVE_TO_MONITOR_DURATION = (FLIGHT_DURATION - LAUNCH_DELAY) * Math.cbrt(MOBILE_MONITOR_APPROACH_FRACTION);
+  const MOBILE_MONITOR_PAUSE_DURATION   = 0;  // no hold/bob at the monitor — glide straight on into the phone
+  const MOBILE_PAN_TO_PHONE_DURATION    = 0.8; // camera pans/tilts down off the monitor and settles above the phone
+  const MOBILE_PHONE_HOVER_PAUSE_DURATION = 0.25; // holds directly above the phone, orientation already settled, before diving in
+  const MOBILE_DIVE_INTO_PHONE_DURATION = 0.55;  // smooth final dive that carries on through the phone's screen until it fills the frame
+
+  function mobileFlightTotalDuration(){
+    return LAUNCH_DELAY + MOBILE_DIVE_TO_MONITOR_DURATION + MOBILE_MONITOR_PAUSE_DURATION + MOBILE_PAN_TO_PHONE_DURATION + MOBILE_PHONE_HOVER_PAUSE_DURATION + MOBILE_DIVE_INTO_PHONE_DURATION;
+  }
+
+  // How high above the phone's screen the camera settles, and how far back
+  // (along its own approach direction) it holds — placing it so the phone
+  // reads clearly in frame rather than looking straight down at it from
+  // directly overhead.
+  const HOVER_HEIGHT_ABOVE_PHONE = 0.15;
+  const HOVER_BACK_DIST = 0.08;
+  // A barely-there vertical drift during the monitor pause — zero at both
+  // ends of the pause (so it never fights the legs on either side of it),
+  // peaking gently in the middle — so the hold reads as the camera
+  // breathing for half a second rather than a hard freeze-frame.
+  const MOBILE_PAUSE_BOB_AMPLITUDE = 0.004;
+  const MOBILE_PHONE_HOVER_BOB_AMPLITUDE = 0.003;
+
+  function smootherstep01(t){
+    const c = Math.max(0, Math.min(1, t));
+    return c*c*c*(c*(c*6 - 15) + 10); // zero velocity at both ends
+  }
+  function smoothstepEdge(edge0, edge1, x){
+    const c = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return c*c*(3 - 2*c);
+  }
+
+  // Evaluates a quadratic Bezier curve through p0 (start), p1 (control),
+  // p2 (end) at parameter t, writing the result into `out`.
+  function quadBezier(p0, p1, p2, t, out){
+    const it = 1 - t;
+    const a = it * it, b = 2 * it * t, c = t * t;
+    out.set(
+      p0.x * a + p1.x * b + p2.x * c,
+      p0.y * a + p1.y * b + p2.y * c,
+      p0.z * a + p1.z * b + p2.z * c
+    );
+    return out;
+  }
+
+  function beginCameraFlight(){
+    flightElapsed = 0;
+
+    flightStartPos.copy(camera.position);
+    flightStartFov = camera.fov;
+    camera.up.set(0, 1, 0);
+    // The correct place to end the dive isn't just "wherever the straight
+    // line from here happens to land" — it's the point directly in front
+    // of the screen, out along its own normal, at the distance where the
+    // screen exactly fills the frame. That's the only spot the screen can
+    // be viewed dead-on from, regardless of the angle the visitor started
+    // at, plus a hair of overshoot on top for momentum.
+    const fillDist = monitorFillDistance(camera.fov, camera.aspect) * CLEAN_ZOOM_FACTOR;
+    flightTargetPos.copy(centerMonitorWorldPos)
+      .addScaledVector(centerMonitorNormal, fillDist - OVERSHOOT_DIST);
+
+    // A control point further out along that same normal axis bends the
+    // straight-line dive into a smooth curve that banks around early,
+    // so the camera is already lined up square with the screen well
+    // before it arrives — never a last-instant snap into alignment. How
+    // far out scales with how far the dive has to travel, so the bank
+    // reads the same whether the visitor started close in or far away.
+    const straightDist = flightStartPos.distanceTo(flightTargetPos);
+    flightControlPos.copy(centerMonitorWorldPos)
+      .addScaledVector(centerMonitorNormal, fillDist + straightDist * 0.65);
+
+    flightIsMobile = isMobileFlightViewport() && !!modernPhoneGroup;
+    if(flightIsMobile){
+      modernPhoneGroup.getWorldPosition(flightPhoneWorldPos);
+
+      // First leg's destination: a point partway along the very same
+      // curved, head-on-aligning bezier the desktop dive traces toward the
+      // monitor (see quadBezier below) — so the mobile dive genuinely
+      // reads as "flying into the screen," curving square to it as it
+      // closes in, exactly like the desktop version, just cut short of
+      // actually arriving.
+      quadBezier(flightStartPos, flightControlPos, flightTargetPos, MOBILE_MONITOR_APPROACH_FRACTION, flightMonitorApproachPos);
+
+      // A stable horizontal "approach" direction from the monitor-approach
+      // point toward the phone, used to place the hover point slightly
+      // back from directly overhead (so the phone reads in frame) rather
+      // than looking straight down at it.
+      const approachDir = flightPhoneWorldPos.clone().sub(flightMonitorApproachPos);
+      approachDir.y = 0;
+      if(approachDir.lengthSq() < 1e-8) approachDir.set(0, 0, 1);
+      approachDir.normalize();
+
+      flightPhoneHoverPos.copy(flightPhoneWorldPos)
+        .addScaledVector(approachDir, -HOVER_BACK_DIST);
+      flightPhoneHoverPos.y = flightPhoneWorldPos.y + HOVER_HEIGHT_ABOVE_PHONE;
+
+      // Control point for the pan/tilt off the monitor: sits above the
+      // straight line between the monitor-approach point and the phone
+      // hover point, so leg 3 arcs up and over on its way down rather than
+      // cutting a flat diagonal — the "curving" part of "dive into the
+      // monitor, then curve and hover over the phone."
+      flightPanControlPos.lerpVectors(flightMonitorApproachPos, flightPhoneHoverPos, 0.5);
+      const panDist = flightMonitorApproachPos.distanceTo(flightPhoneHoverPos);
+      flightPanControlPos.y += Math.max(0.05, panDist * 0.4);
+
+      // Final leg's destination: straight up the screen's own normal from
+      // its actual surface (not the hover camera's current sightline),
+      // at the distance where the screen exactly fills the frame — the
+      // same "only place it can be viewed dead-on" logic the desktop dive
+      // uses for the monitor. A control point further out along that same
+      // normal bends leg 4 into a curve that banks the camera around to
+      // be traveling straight down by the time it arrives, so the
+      // screen's edges land exactly parallel to the frame's edges and the
+      // cut into the landing page reads as passing straight through it
+      // rather than snapping into alignment at the last instant.
+      const phoneFillDist = phoneFillDistance(camera.fov, camera.aspect) * PHONE_CLEAN_ZOOM_FACTOR;
+      flightPhoneFillPos.copy(flightPhoneScreenWorldPos)
+        .addScaledVector(flightPhoneNormal, phoneFillDist);
+      const hoverToFillDist = flightPhoneHoverPos.distanceTo(flightPhoneFillPos);
+      flightPhoneDiveControlPos.copy(flightPhoneScreenWorldPos)
+        .addScaledVector(flightPhoneNormal, phoneFillDist + hoverToFillDist * 0.5);
+    }
+  }
+
+
+
+  // Launch curve: the camera lifts off gently, then keeps gathering speed
+  // all the way through the dive — fastest exactly as it crashes into the
+  // screen. That rising speed (plus the motion blur/lens effect it drives)
+  // is what hides the cut to the homepage: the eye can't track a swap that
+  // happens mid-blur at full speed. Zero velocity only at the very start
+  // (no pop at launch); nothing eases back down at the end, so there's no
+  // perceptible slow-glide-to-a-stop right before the switch.
+  function easeLaunch(p){
+    return p*p*p; // ease-in cubic: continuously accelerating, fastest at p=1
+  }
+
+  // ---------- Lens distortion + motion blur for the final stretch of the dive ----------
+  // Builds the feDisplacementMap source once at startup: red ramps left→right,
+  // green ramps top→bottom, so feDisplacementMap can bow the image outward
+  // from its center. Kept small (edges are heavily blurred anyway) so it's
+  // cheap to generate and decode.
+  function makeLensDisplacementMap(size){
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(size, size);
+    for(let y = 0; y < size; y++){
+      for(let x = 0; x < size; x++){
+        const i = (y * size + x) * 4;
+        img.data[i]   = Math.round(Math.max(0, Math.min(255, 128 + (x / (size - 1) - 0.5) * 255))); // R: x -> x-displacement
+        img.data[i+1] = Math.round(Math.max(0, Math.min(255, 128 + (y / (size - 1) - 0.5) * 255))); // G: y -> y-displacement
+        img.data[i+2] = 128;
+        img.data[i+3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c.toDataURL();
+  }
+
+  const lensDispMapEl = document.getElementById('enterLensDispMap');
+  const lensDispEl    = document.getElementById('enterLensDisp');
+  const lensBlurEl    = document.getElementById('enterLensBlur');
+  let lensEffectReady = false;
+  if(lensDispMapEl && lensDispEl && lensBlurEl){
+    lensDispMapEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', makeLensDisplacementMap(128));
+    lensEffectReady = true;
+  }
+
+  // Kicks in gradually over roughly the final third of the flight, so the
+  // distortion/blur builds smoothly as the screen approaches rather than
+  // snapping on abruptly in the last instant.
+  const LENS_EFFECT_START = 0.68;
+
+  function updateEnterLensEffect(e){
+    if(!lensEffectReady) return;
+    const t = Math.max(0, Math.min(1, (e - LENS_EFFECT_START) / (1 - LENS_EFFECT_START)));
+    // Smoothstep keeps the build gentle and continuous rather than a
+    // last-instant snap.
+    const punch = t*t*(3 - 2*t);
+    if(punch > 0.0005){
+      lensDispEl.setAttribute('scale', (punch * 22).toFixed(1));
+      lensBlurEl.setAttribute('stdDeviation', (punch * 3).toFixed(2));
+      renderer.domElement.style.filter = 'url(#enterLensDistort)';
+      renderer.domElement.style.transform = `scale(${(1 + punch * 0.035).toFixed(4)})`;
+    } else {
+      renderer.domElement.style.filter = '';
+      renderer.domElement.style.transform = '';
+    }
+  }
+
+  // Monitor brightness only starts climbing in the back half of the dive —
+  // early on the screen should just look like a normal monitor getting
+  // closer, not already glowing hot from a distance — then ramps up fast
+  // as the camera closes the last stretch, so the screen itself becomes
+  // the thing pulling focus right before it fills the frame.
+  const MONITOR_BRIGHTEN_START = 0.45;
+  const centerScreenBaseColor = new THREE.Color(1, 1, 1);
+  const centerScreenHotColor = new THREE.Color(1.55, 1.5, 1.4);
+
+  function updateMonitorBrighten(e){
+    const t = Math.max(0, Math.min(1, (e - MONITOR_BRIGHTEN_START) / (1 - MONITOR_BRIGHTEN_START)));
+    const punch = t*t*(3 - 2*t); // smooth, even climb — matches the camera's gentle glide
+    if(centerScreenMat) centerScreenMat.color.copy(centerScreenBaseColor).lerp(centerScreenHotColor, punch);
+    if(centerScreenGlowMat) centerScreenGlowMat.opacity = 0.65 + punch * 0.9;
+  }
+
+  function updateEnterFlightCamera(dt){
+    flightElapsed += dt;
+    if(flightElapsed < LAUNCH_DELAY){
+      // The tiny held beat before the whoosh — position doesn't move yet,
+      // but turn to face the blast/monitor right away so the coffee table
+      // and card burst are in frame for the whole pause. Without this,
+      // whichever way the camera happened to be idling when Enter was
+      // pressed (couch/TV-angled on mobile, roughly monitor-angled by
+      // default on desktop) is what the pause shows, which is why the
+      // burst read as missing on mobile specifically.
+      camera.lookAt(centerMonitorWorldPos);
+      return 0;
+    }
+    const activeElapsed = flightElapsed - LAUNCH_DELAY;
+
+    camera.fov = flightStartFov;
+    camera.updateProjectionMatrix();
+
+    if(flightIsMobile){
+      return updateMobileEnterFlightCamera(activeElapsed);
+    }
+
+    const activeDuration = FLIGHT_DURATION - LAUNCH_DELAY;
+    const p = Math.min(1, activeElapsed / activeDuration);
+    const e = easeLaunch(p);
+    quadBezier(flightStartPos, flightControlPos, flightTargetPos, e, camera.position);
+    camera.lookAt(centerMonitorWorldPos);
+    updateEnterLensEffect(e);
+    updateMonitorBrighten(e);
+    return p;
+  }
+
+  // Mobile-only: curve toward the center monitor exactly like the desktop
+  // flight does, hold there for half a beat, arc up and over off the
+  // monitor and down onto the phone on the desk, then dash on through the
+  // phone's screen for the landing. Each leg starts exactly where the
+  // previous one left off, so the whole thing reads as one unbroken
+  // cinematic move rather than separate camera moves cut together.
+  function updateMobileEnterFlightCamera(activeElapsed){
+    // Leg 1: identical to desktop's dive toward the monitor — same duration
+    // basis, same easing curve, same quadBezier target — so camera
+    // position/orientation here is pixel-identical to what desktop shows at
+    // the same elapsed time. It simply stops (see MOBILE_DIVE_TO_MONITOR_DURATION,
+    // above) at the moment that shared curve reaches
+    // MOBILE_MONITOR_APPROACH_FRACTION of the way to the monitor, rather
+    // than continuing on to a full arrival — that's the one and only place
+    // the mobile and desktop flights diverge.
+    if(activeElapsed < MOBILE_DIVE_TO_MONITOR_DURATION){
+      const p = activeElapsed / (FLIGHT_DURATION - LAUNCH_DELAY);
+      const e = easeLaunch(p);
+      quadBezier(flightStartPos, flightControlPos, flightTargetPos, e, camera.position);
+      camera.lookAt(centerMonitorWorldPos);
+      updateEnterLensEffect(0);
+      updateMonitorBrighten(e);
+      return 0;
+    }
+
+    // Leg 2: no hold on the monitor — MOBILE_MONITOR_PAUSE_DURATION is 0,
+    // so this block is skipped every frame and the camera flows straight
+    // from arriving at the monitor into leg 3's pan toward the phone,
+    // instead of pausing/bobbing there first.
+    const pauseElapsed = activeElapsed - MOBILE_DIVE_TO_MONITOR_DURATION;
+    if(pauseElapsed < MOBILE_MONITOR_PAUSE_DURATION){
+      const u = pauseElapsed / MOBILE_MONITOR_PAUSE_DURATION;
+      const bob = Math.sin(u * Math.PI) * MOBILE_PAUSE_BOB_AMPLITUDE;
+      camera.position.copy(flightMonitorApproachPos);
+      camera.position.y += bob;
+      camera.lookAt(centerMonitorWorldPos);
+      updateEnterLensEffect(0);
+      updateMonitorBrighten(1);
+      return 0;
+    }
+
+    // Leg 3: pan/tilt the camera down off the monitor and onto the phone,
+    // arcing up and over along a curve rather than cutting a flat
+    // diagonal — the "curving" half of "dive into the monitor, then curve
+    // and hover over the phone." Gaze swings from the monitor over onto
+    // the phone's screen as the camera settles directly above it. Eases in
+    // from the same zero velocity the pause ends on, and eases out to zero
+    // again right as it arrives above the phone. Monitor glow fades back
+    // down as attention shifts away from it.
+    const panElapsed = pauseElapsed - MOBILE_MONITOR_PAUSE_DURATION;
+    if(panElapsed < MOBILE_PAN_TO_PHONE_DURATION){
+      const rp = panElapsed / MOBILE_PAN_TO_PHONE_DURATION;
+      const u = smootherstep01(rp);
+      quadBezier(flightMonitorApproachPos, flightPanControlPos, flightPhoneHoverPos, u, camera.position);
+      // Roll the camera's own "up" over from world-up to the screen's own
+      // up edge, but finish that roll well before the gaze itself swings
+      // down to near-vertical (by 60% through this leg, on its own eased
+      // curve) — rolling "up" at the same time the look direction is
+      // pointing almost straight down is what read as the camera
+      // "flipping" onto the phone. Finishing the roll early means there's
+      // no more rotation left to fight the look direction once it matters.
+      const upT = smootherstep01(smoothstepEdge(0, 0.6, rp));
+      _cameraUpBlend.set(0, 1, 0).lerp(flightPhoneUp, upT).normalize();
+      camera.up.copy(_cameraUpBlend);
+      _bankedLookAt.copy(centerMonitorWorldPos).lerp(flightPhoneScreenWorldPos, u);
+      camera.lookAt(_bankedLookAt);
+      updateEnterLensEffect(0);
+      updateMonitorBrighten(1 - u);
+      return 0;
+    }
+
+    // Leg 3.5: a brief settled hold directly above the phone — orientation
+    // already fully resolved (up vector finished rolling back in leg 3),
+    // so this reads as genuinely hovering in place rather than continuing
+    // to spin or tilt. This is the beat that makes "glide up, then hover
+    // over the phone" legible as its own moment before the dive in, and it
+    // gives the eye a stable frame to settle on right before the fast final
+    // approach — the same breathing-room role the monitor pause plays
+    // earlier in the flight.
+    const hoverElapsed = panElapsed - MOBILE_PAN_TO_PHONE_DURATION;
+    if(hoverElapsed < MOBILE_PHONE_HOVER_PAUSE_DURATION){
+      const hu = hoverElapsed / MOBILE_PHONE_HOVER_PAUSE_DURATION;
+      const bob = Math.sin(hu * Math.PI) * MOBILE_PHONE_HOVER_BOB_AMPLITUDE;
+      camera.position.copy(flightPhoneHoverPos);
+      camera.position.y += bob;
+      camera.up.copy(flightPhoneUp);
+      camera.lookAt(flightPhoneScreenWorldPos);
+      updateEnterLensEffect(0);
+      updateMonitorBrighten(0);
+      return 0;
+    }
+
+    // Leg 4: continues smoothly out of the hover's stillness, then curves
+    // — banking around to be traveling straight down, perpendicular to
+    // the screen, by the time it arrives — while gradually gathering
+    // speed into the phone's screen, the same crash-in feel as the
+    // desktop dive into the monitor. Landing dead-on like this is what
+    // makes the screen's edges line up exactly with the frame's edges at
+    // the cut, so it reads as passing straight through what's on screen
+    // rather than popping into alignment at the last instant. The gaze
+    // stays locked on the screen itself (not the phone's pivot) the whole
+    // time.
+    const dashElapsed = hoverElapsed - MOBILE_PHONE_HOVER_PAUSE_DURATION;
+    const v = Math.min(1, dashElapsed / MOBILE_DIVE_INTO_PHONE_DURATION);
+    const ev = easeLaunch(v);
+    quadBezier(flightPhoneHoverPos, flightPhoneDiveControlPos, flightPhoneFillPos, ev, camera.position);
+    camera.up.copy(flightPhoneUp);
+    camera.lookAt(flightPhoneScreenWorldPos);
+    updateEnterLensEffect(ev);
+    return v;
+  }
+
+
+
+  // Desk chair: caught by the passing air, it eases into a slow, smooth
+  // swivel — a gentle wind-up rather than a snap — matching the unhurried
+  // pace of the rest of the dive. Continues from wherever its idle swivel
+  // left off so there's no pop at the handoff.
+  let chairSpinElapsed = 0;
+  let chairSpinAngle = 0;
+  const CHAIR_SPIN_UP_TIME = 1.4;  // gentle wind-up to full speed
+  const CHAIR_SPIN_RATE = 3.2;     // rad/s at full speed — a smooth, easy turn
+
+  function beginChairSpin(){
+    chairSpinElapsed = 0;
+    chairSpinAngle = deskChairGroup ? deskChairGroup.rotation.y : 0;
+  }
+
+  function updateChairSpin(dt){
+    if(!deskChairGroup) return;
+    chairSpinElapsed += dt;
+    const upP = Math.min(1, chairSpinElapsed / CHAIR_SPIN_UP_TIME);
+    const spinUpEase = upP*upP*(3 - 2*upP); // smoothstep wind-up, no snap
+    chairSpinAngle += CHAIR_SPIN_RATE * spinUpEase * dt;
+    deskChairGroup.rotation.y = chairSpinAngle;
+  }
+
+  // Synthesizes the swoosh/wind sound entirely with the Web Audio API —
+  // filtered noise swept upward for the rush of air, a rising sub-bass
+  // swell for weight, and a short bright tick at the moment of "impact"
+  // with the screen.
+  function playSwooshSound(){
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return;
+      const ctx = new AC();
+      const dur = FLIGHT_DURATION + 0.35;
+      const now = ctx.currentTime;
+
+      const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for(let i=0;i<bufferSize;i++) data[i] = Math.random()*2-1;
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+
+      const bandpass = ctx.createBiquadFilter();
+      bandpass.type = 'bandpass';
+      bandpass.Q.value = 0.65;
+      bandpass.frequency.setValueAtTime(260, now);
+      bandpass.frequency.exponentialRampToValueAtTime(4500, now + dur*0.6);
+      bandpass.frequency.exponentialRampToValueAtTime(650, now + dur);
+
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.55, now + dur*0.55);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      noise.connect(bandpass); bandpass.connect(noiseGain); noiseGain.connect(ctx.destination);
+
+      const sub = ctx.createOscillator();
+      sub.type = 'sine';
+      sub.frequency.setValueAtTime(52, now);
+      sub.frequency.exponentialRampToValueAtTime(26, now + dur*0.85);
+      const subGain = ctx.createGain();
+      subGain.gain.setValueAtTime(0.0001, now);
+      subGain.gain.exponentialRampToValueAtTime(0.5, now + dur*0.66);
+      subGain.gain.exponentialRampToValueAtTime(0.0001, now + dur*0.95);
+      sub.connect(subGain); subGain.connect(ctx.destination);
+
+      const impactStart = now + dur*0.60;
+      const impact = ctx.createOscillator();
+      impact.type = 'triangle';
+      impact.frequency.setValueAtTime(950, impactStart);
+      impact.frequency.exponentialRampToValueAtTime(110, impactStart + 0.28);
+      const impactGain = ctx.createGain();
+      impactGain.gain.setValueAtTime(0.0001, impactStart - 0.02);
+      impactGain.gain.exponentialRampToValueAtTime(0.32, impactStart + 0.02);
+      impactGain.gain.exponentialRampToValueAtTime(0.0001, impactStart + 0.3);
+      impact.connect(impactGain); impactGain.connect(ctx.destination);
+
+      noise.start(now); noise.stop(now + dur);
+      sub.start(now); sub.stop(now + dur);
+      impact.start(impactStart - 0.02); impact.stop(impactStart + 0.32);
+    }catch(e){ /* Web Audio unavailable — the visual transition still runs */ }
+  }
+
+  // Short synthesized "gust" for the card-blow beat — a quick burst of
+  // high-passed noise with a fast attack and decay, like a sudden puff of
+  // wind scattering paper, distinct from (and shorter than) the swoosh.
+  function playCardGustSound(){
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return;
+      const ctx = new AC();
+      const dur = CARD_BLOW_DURATION + 0.15;
+      const now = ctx.currentTime;
+
+      const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for(let i=0;i<bufferSize;i++) data[i] = Math.random()*2-1;
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+
+      const highpass = ctx.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.setValueAtTime(700, now);
+      highpass.frequency.exponentialRampToValueAtTime(2200, now + dur*0.5);
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.4, now + dur*0.18);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+      noise.connect(highpass); highpass.connect(gain); gain.connect(ctx.destination);
+      noise.start(now); noise.stop(now + dur);
+    }catch(e){ /* Web Audio unavailable — the visual transition still runs */ }
+  }
+
+  // Holds the in-flight swoosh-streak animation (null when idle). Previously
+  // this function ran its own recursive requestAnimationFrame loop; it now
+  // just seeds this state, and stepSwooshStreaks (called every frame from
+  // the main animate() loop) advances it — same per-frame math, one fewer
+  // concurrent RAF chain.
+  let swooshState = null;
+
+  // Draws motion streaks rushing outward from a fixed screen-space focal
+  // point (the center monitor's position at the moment Enter is pressed),
+  // reading as forward speed toward that point.
+  function runSwooshStreaks(originX, originY, durationMs){
+    const canvas = document.getElementById('swooshCanvas');
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const streaks = [];
+    const streakCount = 78;
+    for(let i=0;i<streakCount;i++){
+      streaks.push({
+        angle: Math.random() * Math.PI * 2,
+        dist: 20 + Math.random() * 200,
+        speed: 1150 + Math.random() * 2100,
+        len: 70 + Math.random() * 220,
+        width: 1.3 + Math.random() * 3.2,
+        cool: Math.random() > 0.45
+      });
+    }
+
+    swooshState = { ctx, streaks, originX, originY, durationMs, start: performance.now() };
+  }
+
+  // Advances the swoosh-streak overlay by one frame; a no-op (single
+  // pointer check) whenever no swoosh is in flight.
+  function stepSwooshStreaks(now){
+    const s = swooshState;
+    if(!s) return;
+    const ctx = s.ctx;
+    const elapsed = now - s.start;
+    const p = Math.min(1, elapsed / s.durationMs);
+    const intensity = Math.min(1, p / 0.16);
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.globalCompositeOperation = 'lighter';
+    for(const streak of s.streaks){
+      const travel = streak.speed * (elapsed/1000) * (0.35 + intensity*0.95);
+      const d0 = streak.dist + travel;
+      const d1 = d0 + streak.len * (0.55 + intensity*0.85);
+      const x0 = s.originX + Math.cos(streak.angle)*d0, y0 = s.originY + Math.sin(streak.angle)*d0;
+      const x1 = s.originX + Math.cos(streak.angle)*d1, y1 = s.originY + Math.sin(streak.angle)*d1;
+      const alpha = (1 - p*0.55) * intensity * 0.7;
+      if(alpha <= 0.002) continue;
+      const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+      const rgb = streak.cool ? '190,222,255' : '255,255,255';
+      grad.addColorStop(0, `rgba(${rgb},0)`);
+      grad.addColorStop(1, `rgba(${rgb},${alpha.toFixed(3)})`);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = streak.width * (0.6 + intensity*1.3);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    if(elapsed >= s.durationMs){
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      swooshState = null;
+    }
+  }
+
+
+  function startEnterSequence(){
+    if(entering) return;
+    entering = true;
+    enterStage = 1;
+    console.log('startEnterSequence() called');
+
+    // Cut the TV's own video/sound immediately — the transition takes over
+    // the room's audio from here on.
+    if(window.turnOffTV) window.turnOffTV();
+
+    // Retire the Enter button and any hover-driven glow so nothing fights
+    // the transition visually.
+    if(enterBtn) enterBtn.style.display = 'none';
+    if(instagramBtn) instagramBtn.style.display = 'none';
+    hoverTarget = 0;
+    renderer.domElement.style.cursor = 'default';
+
+    // Everything launches on the same frame: the card burst, the camera
+    // dive, and the whoosh/streaks. Nothing waits for anything else —
+    // that simultaneity is what makes it read as a single explosive hit
+    // instead of a wind-up followed by a payoff.
+    // The cards and chair react to the force immediately — but the camera
+    // itself holds for a beat first. That tiny held pause is what makes
+    // the whoosh and the launch that follows it feel like a single sudden
+    // shot rather than something gradually ramping up.
+    beginPressureWave();
+    beginCardBlow();
+    beginChairSpin();
+    playCardGustSound();
+    beginCameraFlight();
+
+    // Where the center monitor sits on screen right now becomes the single
+    // focal point every effect converges on: the streaks rush from it, the
+    // flash blooms from it, the vignette tunnels around it.
+    const screenPos = centerMonitorWorldPos.clone().project(camera);
+    const originX = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+    const originY = (1 - (screenPos.y * 0.5 + 0.5)) * window.innerHeight;
+    const fxPct = (originX / window.innerWidth * 100).toFixed(2) + '%';
+    const fyPct = (originY / window.innerHeight * 100).toFixed(2) + '%';
+
+    const overlay      = document.getElementById('enterTransition');
+    const swooshCanvas = document.getElementById('swooshCanvas');
+    const flash        = document.getElementById('enterFlash');
+    const vignette      = document.getElementById('enterVignette');
+
+    overlay.style.setProperty('--fx', fxPct);
+    overlay.style.setProperty('--fy', fyPct);
+    overlay.classList.add('active');
+    overlay.style.pointerEvents = 'auto';
+
+    // The destination is a real top-level page now, not an iframe, so the
+    // dive has to hand off the parts of this transition that need to keep
+    // reading as one continuous motion once we're on the other side: which
+    // point on screen everything converged on, and whether this was the
+    // desktop or mobile flight (the landing page uses this to pick up the
+    // flash/vignette resolve with matching position and timing). Cleared by
+    // the landing page itself the instant it reads it, so a plain reload or
+    // a later visit never replays it.
+    const LANDING_URL = 'home.html';
+    function goToLanding(){
+      try{
+        sessionStorage.setItem('wcIntroArrival', JSON.stringify({
+          fx: fxPct,
+          fy: fyPct,
+          mobile: flightIsMobile
+        }));
+      }catch(e){}
+      window.location.href = LANDING_URL;
+    }
+
+    const launchDelayMs = LAUNCH_DELAY * 1000;
+    // Desktop keeps its original single-dive duration; mobile's total is
+    // longer to make room for the dive-to-phone / hover / dive-into-phone
+    // sequence above. Either way this is the one duration every external
+    // timer below is scheduled against, so the landing transition always
+    // lands exactly when the camera actually arrives.
+    const flightMs = (flightIsMobile ? mobileFlightTotalDuration() : FLIGHT_DURATION) * 1000;
+    const remainingFlightMs = flightMs - launchDelayMs;
+
+    // WHOOSH: sound, streaks, and vignette all detonate together right as
+    // the held pause ends — the exact instant the camera launches — not
+    // before it. That simultaneity, after a beat of nothing, is the "shot"
+    // rather than a glide.
+    setTimeout(()=>{
+      swooshCanvas.style.transition = 'opacity 0.35s ease';
+      swooshCanvas.style.opacity = '1';
+
+      vignette.style.transition = `opacity ${(remainingFlightMs*0.7/1000).toFixed(2)}s ease-in-out`;
+      vignette.style.opacity = '0.7';
+
+      playSwooshSound();
+      runSwooshStreaks(originX, originY, remainingFlightMs + 120);
+    }, launchDelayMs);
+
+    if(flightIsMobile){
+      // Mobile: the dive continues straight through the phone's screen, so
+      // the cut to the landing page has to land right on the beat the
+      // screen fills the frame — any lingering cover (white-out) would
+      // read as a separate transition grafted on top of the dive instead
+      // of the dive continuing through the screen. There's no iframe to
+      // pre-load anymore, so the real navigation fires right on that beat;
+      // the landing page itself is what performs the quick 0.35s fade-in
+      // (see the arrival-overlay script on home.html), keeping the "glide,
+      // not a hard cut" feel intact across the page boundary.
+      setTimeout(goToLanding, flightMs);
+      return;
+    }
+
+    // The flash only blooms once the camera has actually arrived — the
+    // monitor has fully filled the frame — not a moment before. That order
+    // is what sells "the camera flew into the screen" rather than "the
+    // page just cut away while the camera was still moving." A slower,
+    // soft bloom here (rather than a sudden pop) is what keeps the whole
+    // arrival feeling like a gentle exposure change instead of a flashbulb.
+    setTimeout(()=>{
+      flash.style.transition = 'opacity 0.4s ease-in-out';
+      flash.style.opacity = '1';
+    }, flightMs);
+
+    // Navigate only once the monitor has filled the screen and the flash
+    // is already covering it — the page switch itself is hidden entirely
+    // inside the white-out, never visible as a cut. The landing page picks
+    // up the flash/vignette from here (see home.html's arrival-overlay
+    // script) and carries the same 0.6s resolve the rest of the way, so
+    // the crossfade continues uninterrupted across the real navigation.
+    setTimeout(goToLanding, flightMs + 60);
+  }
+  window.startEnterSequence = startEnterSequence;
+
+  const enterBtn = document.getElementById('enterBtn');
+  if(enterBtn){
+    enterBtn.addEventListener('click', startEnterSequence);
+  }
+
+  const instagramBtn = document.getElementById('instagramBtn');
+  if(instagramBtn){
+    instagramBtn.addEventListener('click', ()=>{
+      window.open('https://www.instagram.com/wildcardshit', '_blank', 'noopener');
+    });
+  }
+
+  // Hover state: eased 0..1 value, driven up on pointer enter and back down
+  // on pointer leave, smoothed each frame in the render loop rather than
+  // snapping — so brightening the hologram, the table's glow, and the
+  // light spilling onto nearby objects all ease in and out together.
+  // Two sources feed the same target: the HTML Enter button itself, and
+  // the 3D coffee table mesh (via raycasting) — hovering or clicking
+  // either one has the same effect.
+  let hoverTarget = 0;
+  let hoverAmount = 0;
+  let tvHoverTarget = 0;
+  let tvHoverAmount = 0;
+  let isOverButtonEl = false;
+  let isOverTableMesh = false;
+  if(enterBtn){
+    enterBtn.addEventListener('pointerenter', ()=>{ isOverButtonEl = true; hoverTarget = 1; });
+    enterBtn.addEventListener('pointerleave', ()=>{ isOverButtonEl = false; hoverTarget = isOverTableMesh ? 1 : 0; });
+  }
+  if(instagramBtn){
+    instagramBtn.addEventListener('pointerenter', ()=>{ isOverButtonEl = true; hoverTarget = 1; });
+    instagramBtn.addEventListener('pointerleave', ()=>{ isOverButtonEl = false; hoverTarget = isOverTableMesh ? 1 : 0; });
+  }
+
+  // Raycasting against the whole table (top, legs, and its glow meshes) so
+  // hovering or clicking anywhere on the table behaves like hovering or
+  // clicking the Enter button itself.
+  const tableRaycaster = new THREE.Raycaster();
+  const pointerNDC = new THREE.Vector2(-2, -2); // start off-screen
+  let hasPointer = false;
+
+  function updatePointerNDC(x, y){
+    pointerNDC.x = (x / window.innerWidth) * 2 - 1;
+    pointerNDC.y = -(y / window.innerHeight) * 2 + 1;
+    hasPointer = true;
+  }
+  function tableHitAt(x, y){
+    if(!tableGroupRef) return false;
+    updatePointerNDC(x, y);
+    tableRaycaster.setFromCamera(pointerNDC, camera);
+    const hits = tableRaycaster.intersectObject(tableGroupRef, true);
+    return hits.length > 0;
+  }
+
+  // Clicking the wall-mounted TV opens the linked song in a new tab —
+  // independent of the table's click-to-enter behavior above, and works
+  // the same way on touch (tap) as it does with a mouse click.
+  const TV_LINK_URL = 'https://music.apple.com/us/album/poetic/1756188538?i=1756188540';
+  function tvHitAt(x, y){
+    if(!tvClickMeshes.length) return false;
+    updatePointerNDC(x, y);
+    tableRaycaster.setFromCamera(pointerNDC, camera);
+    const hits = tableRaycaster.intersectObjects(tvClickMeshes, false);
+    return hits.length > 0;
+  }
+
+  window.addEventListener('mousemove', e=>{ updatePointerNDC(e.clientX, e.clientY); });
+  window.addEventListener('mouseleave', ()=>{ hasPointer = false; isOverTableMesh = false; hoverTarget = isOverButtonEl ? 1 : 0; });
+
+  // Touch-capable devices (mobile/tablet) never enter the site via a table
+  // tap — only the toggle below handles taps on touch. Desktop (mouse-only)
+  // keeps the original click-to-enter behavior on the table, unaffected.
+  const isTouchCapable = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  renderer.domElement.addEventListener('click', e=>{
+    // Ignore clicks that were really a look-around drag.
+    if(dragDistance > 6) return;
+    if(tvHitAt(e.clientX, e.clientY)){
+      window.open(TV_LINK_URL, '_blank', 'noopener');
+      return;
+    }
+    if(isTouchCapable) return;
+    if(tableHitAt(e.clientX, e.clientY)) startEnterSequence();
+  });
+  // Mobile only: touch has no hover state, so a tap on the table wouldn't
+  // otherwise trigger the brightening cascade (hologram glow, table glow,
+  // camera nudge, etc.) that a mouse hover gives on desktop. Since a mobile
+  // "hover" can't be held the way a cursor can, tapping the table turns
+  // that same hoverTarget state on like a light switch. While it's on,
+  // ANY subsequent tap — on the table again or anywhere else on the canvas
+  // — kills it, since there's no ambient mouse-hover to fall back to and
+  // leaving it stuck on until the table is tapped again feels broken. This
+  // never starts the enter dive — the click handler above bails out
+  // entirely on touch-capable devices, so table taps can only ever toggle
+  // the hover.
+  let mobileTableHoverOn = false;
+  renderer.domElement.addEventListener('touchend', e=>{
+    if(dragDistance > 6) return;
+    const touch = e.changedTouches && e.changedTouches[0];
+    if(!touch) return;
+    const hitTable = tableHitAt(touch.clientX, touch.clientY);
+    if(mobileTableHoverOn){
+      // Already on: any tap at all (table or elsewhere) turns it back off.
+      if(hitTable) e.preventDefault();
+      mobileTableHoverOn = false;
+      isOverTableMesh = false;
+      hoverTarget = isOverButtonEl ? 1 : 0;
+    } else if(hitTable){
+      // Off: only a tap that actually lands on the table turns it on.
+      e.preventDefault();
+      mobileTableHoverOn = true;
+      isOverTableMesh = true;
+      hoverTarget = 1;
+    }
+  });
+
+  // Label now stays static as "Enter" (cycling with "Wildcard" removed per request).
+
+  // ---------- Remote power-on sequence ----------
+  // Drives the coffee-table remote through a short, automatic bit on page
+  // load: lift off the table, hold, tilt to aim at the TV, mime pressing
+  // the power button (which is the moment the TV video + its sound turn
+  // on), then ease back down to exactly where it started. Runs once; after
+  // that the remote just sits idle on the table like the rest of the
+  // clutter — until the visitor presses Enter, which turns the TV back off
+  // (see startEnterSequence / turnOffTV) ahead of loading into the site.
+  const REMOTE_LIFT_DUR   = 0.85; // seconds to rise — slow and weighted, not a snap
+  const REMOTE_PAUSE_DUR  = 0.3;  // seconds held aloft, still, before turning to aim
+  const REMOTE_POINT_DUR  = 0.55; // seconds to tilt/aim (buttons toward the TV)
+  const REMOTE_PRESS_DUR  = 0.28; // seconds for the power-button depress
+  const REMOTE_RETURN_DUR = 0.95; // seconds easing back to the table — slow, graceful descent
+  let   REMOTE_LIFT_HEIGHT = 0.10;   // meters risen off the tabletop — recomputed once the
+                                      // remote's resting height is known (see placeGlbProp
+                                      // callback above): roughly half the room's height.
+  const REMOTE_POINT_YAW    = -0.46; // extra yaw (rad) turning the button face toward the TV
+  const REMOTE_POINT_PITCH  = -0.62; // extra pitch (rad) tilting the button face up at the TV
+  const REMOTE_PRESS_TILT    = -0.10; // extra pitch (rad) — subtle thumb-press nod
+  const REMOTE_PRESS_DEPRESS = 0.012; // meters — the remote dips down slightly as the power
+                                       // button is depressed, like a real button click
+
+  const TV_POWER_FADE_DUR   = 0.4;  // seconds for the screen to fade up
+  const TV_FLASH_DUR        = 0.28; // seconds for the whole energy-pulse effect (<0.3s)
+  const TV_FLASH_REVEAL_LAG = 0.08; // seconds the video waits before starting its own fade,
+                                     // so the pulse clearly lands first frame-wise
+
+  function updateRemoteAndTV(t){
+    // Power-on energy pulse: a sharp blue-white flash sweeps across the
+    // screen and briefly casts extra light off the panel, then blooms and
+    // settles away — all within TV_FLASH_DUR — just ahead of the video's
+    // first frame fading in underneath it.
+    if(tvPoweredOn && tvPowerOnStartTime !== null){
+      const flashX = (t - tvPowerOnStartTime) / TV_FLASH_DUR;
+      if(flashX <= 1 && tvFlashWashMat && tvFlashBarMat && tvFlashBarMesh){
+        const washE = pulseEnvelope(flashX, 0.24, 2.2);
+        const barE  = pulseEnvelope(flashX, 0.14, 3.2);
+        tvFlashWashMat.opacity = washE * 0.85;
+        tvFlashBarMat.opacity  = barE * 1.0;
+        const sweep = easeOutCubic(Math.min(1, flashX * 1.2)); // reaches the far edge just before the pulse ends
+        tvFlashBarMesh.position.x = -tvFlashBarHalfRange + tvFlashBarHalfRange * 2 * sweep;
+      } else if(tvFlashWashMat && tvFlashBarMat){
+        // Pulse has finished — make sure both overlays are fully cleared.
+        tvFlashWashMat.opacity = 0;
+        tvFlashBarMat.opacity = 0;
+      }
+    }
+
+    // TV screen fade-in, independent of the remote once triggered. Starts
+    // a beat after the video actually has a frame ready — not just after
+    // the press — so a slow (mobile) connection never shows the screen
+    // fading up over stale/blank video data.
+    if(tvPoweredOn && tvVideoMatRef && tvVideoMatRef.opacity < 1 && tvVideoReady){
+      if(tvVideoFadeStartTime === null) tvVideoFadeStartTime = Math.max(t, tvPowerOnStartTime);
+      const fadeT = Math.min(1, Math.max(0, (t - tvVideoFadeStartTime - TV_FLASH_REVEAL_LAG) / TV_POWER_FADE_DUR));
+      tvVideoMatRef.opacity = easeInOutCubic(fadeT);
+    }
+
+    if(!remoteHolder || remoteAnimState === 'idle') return;
+
+    // Kick off the sequence the first frame the remote model is available
+    // — automatic, on page load, no visitor action required.
+    if(remoteAnimState === 'pending'){
+      remoteAnimState = 'lifting';
+      remoteAnimStartTime = t;
+    }
+
+    const liftEnd   = REMOTE_LIFT_DUR;
+    const pauseEnd  = liftEnd + REMOTE_PAUSE_DUR;
+    const pointEnd  = pauseEnd + REMOTE_POINT_DUR;
+    const pressEnd  = pointEnd + REMOTE_PRESS_DUR;
+    const returnEnd = pressEnd + REMOTE_RETURN_DUR;
+    const dt = t - remoteAnimStartTime;
+
+    if(dt <= liftEnd){
+      // Smooth cubic float off the table — no spring/overshoot, just a
+      // clean weighted rise that eases in and out with nothing abrupt.
+      // A faint roll rides along and resolves back to zero by the top of
+      // the lift, so the object reads as floating rather than sliding.
+      const x = Math.min(1, dt / REMOTE_LIFT_DUR);
+      const e = easeInOutCubic(x);
+      remoteHolder.position.y = remoteRestY + REMOTE_LIFT_HEIGHT * e;
+      remoteHolder.rotation.x = 0;
+      remoteHolder.rotation.y = remoteRestRotY;
+      remoteHolder.rotation.z = Math.sin(e * Math.PI) * 0.035 * (1 - e);
+    } else if(dt <= pauseEnd){
+      // Held aloft for exactly REMOTE_PAUSE_DUR (0.5s) — a faint hover-
+      // breathe rather than a dead-still freeze, since it's hanging in
+      // open air this high up, but no net drift: it ends exactly where
+      // it started this phase, ready for a clean handoff into the turn.
+      const holdT = dt - liftEnd;
+      remoteHolder.position.y = remoteRestY + REMOTE_LIFT_HEIGHT + Math.sin(holdT * 2.4) * 0.010;
+      remoteHolder.rotation.x = 0;
+      remoteHolder.rotation.y = remoteRestRotY + Math.sin(holdT * 1.7) * 0.015;
+      remoteHolder.rotation.z = 0;
+    } else if(dt <= pointEnd){
+      // Cubic turn: the remote's top face (green/red buttons) rotates to
+      // aim squarely at the TV.
+      const e = easeInOutCubic(Math.min(1, (dt - pauseEnd) / REMOTE_POINT_DUR));
+      remoteHolder.position.y = remoteRestY + REMOTE_LIFT_HEIGHT;
+      remoteHolder.rotation.x = REMOTE_POINT_PITCH * e;
+      remoteHolder.rotation.y = remoteRestRotY + REMOTE_POINT_YAW * e;
+      remoteHolder.rotation.z = 0;
+    } else if(dt <= pressEnd){
+      // Power-button depress: a cubic down-and-back motion (not a sine
+      // snap) — the remote itself dips down a few millimeters and tilts
+      // very slightly further, then rises back to the aimed pose.
+      const localT = Math.min(1, (dt - pointEnd) / REMOTE_PRESS_DUR);
+      const half = localT < 0.5 ? localT * 2 : (1 - localT) * 2; // 0 -> 1 -> 0
+      const pressWave = easeInOutCubic(half);
+      remoteHolder.position.y = remoteRestY + REMOTE_LIFT_HEIGHT - REMOTE_PRESS_DEPRESS * pressWave;
+      remoteHolder.rotation.x = REMOTE_POINT_PITCH + REMOTE_PRESS_TILT * pressWave;
+      remoteHolder.rotation.y = remoteRestRotY + REMOTE_POINT_YAW;
+      // Exact frame of contact: the bottom of the depress (localT === 0.5,
+      // pressWave at its peak) is when the button actually lands — that's
+      // the single frame the TV video and background music start on.
+      if(!tvPoweredOn && localT >= 0.5) turnOnTV(t);
+    } else if(dt <= returnEnd){
+      // Long, smooth cubic descent all the way back down to the table.
+      const e = easeInOutCubic(Math.min(1, (dt - pressEnd) / REMOTE_RETURN_DUR));
+      remoteHolder.position.y = remoteRestY + REMOTE_LIFT_HEIGHT * (1 - e);
+      remoteHolder.rotation.x = REMOTE_POINT_PITCH * (1 - e);
+      remoteHolder.rotation.y = remoteRestRotY + REMOTE_POINT_YAW * (1 - e);
+    } else {
+      // Settled: snap exactly to the original resting transform and stop —
+      // the remote remains perfectly still on the table from here on.
+      remoteHolder.position.set(remoteRestPos.x, remoteRestY, remoteRestPos.z);
+      remoteHolder.rotation.set(0, remoteRestRotY, 0);
+      remoteAnimState = 'idle';
+    }
+  }
+
+  // ---------- Animate ----------
+  const clock = new THREE.Clock();
+  let rafHandle = null;
+  // Per-frame caches for the Enter/Instagram button overlay (see animate()).
+  const enterBtnProjVec = new THREE.Vector3();
+  let lastBtnFilter = null;
+  let lastBtnDisplay = null;
+  function animate(){
+    rafHandle = requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    const t = clock.elapsedTime;
+    // Single timestamp shared by every subsystem driven off this frame
+    // (the swoosh overlay and the day/night transition both used to run
+    // their own independent requestAnimationFrame chains against
+    // performance.now(); they're now stepped from here instead, so the
+    // page only ever has one RAF loop in flight).
+    const now = performance.now();
+    stepMobileDprIfSlow(dt);
+
+    // No-ops (single `if` check) whenever nothing is in flight, so this
+    // costs nothing on the vast majority of frames.
+    stepSwooshStreaks(now);
+    if(window.__roomStepDayNight) window.__roomStepDayNight(now);
+
+    if(entering){
+      // The Enter transition owns the camera completely for the remainder
+      // of the visit — skip idle drift, hover, and table raycasting
+      // entirely. The card burst and the camera's dive into the monitor
+      // run in the same frame, not as sequential stages, so the whole hit
+      // reads as one simultaneous explosion.
+      updateCardBlow(dt);
+      updateEnterFlightCamera(dt);
+      updateChairSpin(dt);
+      renderFrame();
+      return;
+    }
+
+    updateRemoteAndTV(t);
+
+    // Re-check whether the pointer is currently over the 3D table each
+    // frame (not just on mousemove), since the camera itself drifts during
+    // the idle animation — the table can move under a stationary cursor.
+    // Desktop (mouse) only: on touch devices this per-frame raycast would
+    // otherwise re-run off of whatever screen position the last tap landed
+    // on (tableHitAt updates pointerNDC as a side effect for every tap, on
+    // or off the table) and immediately stomp the toggle state set by the
+    // touchend handler below — turning the glow back off the instant you
+    // tapped anywhere that wasn't the table. Skipping this block on touch
+    // devices leaves mobileTableHoverOn as the single source of truth.
+    if(!isTouchCapable && hasPointer && !dragging && tableGroupRef){
+      tableRaycaster.setFromCamera(pointerNDC, camera);
+      const hits = tableRaycaster.intersectObject(tableGroupRef, true);
+      isOverTableMesh = hits.length > 0;
+      let cursorIsPointer = isOverTableMesh;
+      let isOverTvMesh = false;
+      if(tvClickMeshes.length){
+        tableRaycaster.setFromCamera(pointerNDC, camera);
+        isOverTvMesh = tableRaycaster.intersectObjects(tvClickMeshes, false).length > 0;
+        if(isOverTvMesh) cursorIsPointer = true;
+      }
+      tvHoverTarget = isOverTvMesh ? 1 : 0;
+      renderer.domElement.style.cursor = cursorIsPointer ? 'pointer' : '';
+      hoverTarget = (isOverButtonEl || isOverTableMesh) ? 1 : 0;
+    }
+
+    // Ease the hover amount toward its target rather than snapping, so the
+    // brighten-on-hover effect below feels like a smooth rise/fall.
+    hoverAmount += (hoverTarget - hoverAmount) * Math.min(1, dt * 1.8);
+    // Run the raw eased value through a smoothstep curve so the hologram's
+    // brightening starts and ends gently (slow-fast-slow) instead of at a
+    // constant linear rate — reads as a soft glow rising, not a dimmer knob.
+    const hoverEase = hoverAmount * hoverAmount * (3 - 2 * hoverAmount);
+
+    // Same easing treatment, kept fully separate from the table's hoverEase
+    // above, for the TV's own hover-brighten cue (see the tvGlowRef block
+    // further down) — hovering the table shouldn't spike the TV's glow and
+    // vice versa.
+    tvHoverAmount += (tvHoverTarget - tvHoverAmount) * Math.min(1, dt * 1.8);
+    const tvHoverEase = tvHoverAmount * tvHoverAmount * (3 - 2 * tvHoverAmount);
+
+    if(!dragging){
+      idleTimer += dt;
+      const target = idleTarget(t);
+
+      if(returnT < 1){
+        // Ease smoothly from wherever the visitor let go back onto the
+        // moving idle track — never a hard snap into a new framing.
+        returnT = Math.min(1, returnT + dt / RETURN_DURATION);
+        const e = easeInOutCubic(returnT);
+        camera.position.lerpVectors(releasePos, target.pos, e);
+        yaw         = releaseYaw   + (target.yaw   - releaseYaw)   * e;
+        pitch       = releasePitch + (target.pitch - releasePitch) * e;
+        currentRoll = releaseRoll  + (target.roll  - releaseRoll)  * e;
+      } else {
+        camera.position.copy(target.pos);
+        yaw = target.yaw;
+        pitch = target.pitch;
+        currentRoll = target.roll;
+      }
+      updateCameraDirection(currentRoll);
+      // Subtle "leaning in" nudge on hover — a small forward dolly along the
+      // current view direction, eased with the same hoverEase curve as the
+      // glow. Only safe to apply here, right after camera.position has just
+      // been freshly reset to the idle track above — recomputed fresh each
+      // frame rather than accumulated, so it never drifts or compounds.
+      if(hoverEase > 0.001) camera.translateZ(-hoverEase * 0.09);
+    } else {
+      // While the visitor is in control (actively dragging/holding a touch
+      // down), ease the rendered look direction toward the pointer-driven
+      // target rather than snapping straight to it — a light, weighted
+      // "camera operator" lag rather than a rigid 1:1 mouse-follow. Frame-
+      // rate independent exponential smoothing so it feels identical at
+      // any refresh rate.
+      const dragEase = 1 - Math.exp(-dt * DRAG_CATCHUP);
+      yaw   += (targetYaw   - yaw)   * dragEase;
+      pitch += (targetPitch - pitch) * dragEase;
+
+      // Smoothed angular velocity of the pointer target, kept only so a
+      // release mid-flick can carry a touch of momentum into the settle
+      // (see onUp) instead of the view stopping dead.
+      if(dt > 0){
+        const instYawVel   = (targetYaw   - prevFrameTargetYaw)   / dt;
+        const instPitchVel = (targetPitch - prevFrameTargetPitch) / dt;
+        const velEase = 1 - Math.exp(-dt * 12);
+        yawVel   += (instYawVel   - yawVel)   * velEase;
+        pitchVel += (instPitchVel - pitchVel) * velEase;
+      }
+      prevFrameTargetYaw = targetYaw;
+      prevFrameTargetPitch = targetPitch;
+
+      // Ease any residual roll back to level so manual looking always feels
+      // stable underfoot. The hover dolly above is skipped here on purpose:
+      // camera.position isn't reset to a known base while dragging, so
+      // applying translateZ every frame here would compound into a runaway
+      // zoom for as long as the touch/drag is held.
+      currentRoll += (0 - currentRoll) * Math.min(1, dt * 3);
+      updateCameraDirection(currentRoll);
+    }
+
+    // Desk chair: a slow, gentle swivel from left to right and back, like
+    // it's idly turning — smooth sine so it eases at each end rather than
+    // ticking back and forth at a constant rate. Only the seat/back
+    // subgroup rotates; the base (legs, casters, column) stays planted.
+    if(deskChairGroup){
+      const swivelPeriod    = 14;   // seconds for a full left-right-left cycle
+      const swivelAmplitude = 0.5;  // radians (~29°) of swing each way
+      deskChairGroup.rotation.y = deskChairBaseYaw +
+        Math.sin((t / swivelPeriod) * Math.PI * 2) * swivelAmplitude;
+    }
+
+    // Scroll the high-altitude clouds a hair's width per second — slow
+    // enough to be almost unnoticeable moment-to-moment, but cinematic
+    // over the course of a visit.
+    if(cloudTex){
+      cloudTex.offset.x += dt * 0.0016;
+    }
+
+    // Read once per frame — reused below for both the daytime cloud fade
+    // and the whole sun/night effects block (0 = night, 1 = full sun),
+    // eased by the day/night toggle whenever the sun/moon button is pressed.
+    const sunF = (window.__roomDayNight && window.__roomDayNight.sunFactor) || 0;
+
+    // Drift the daytime clouds across the landscape photo's sky at a
+    // clearly readable pace, fading them in with sunFactor so they're
+    // only visible once the window has crossfaded over to daylight.
+    if(dayCloudTex && dayCloudMat){
+      dayCloudTex.offset.x += dt * 0.012;
+      dayCloudMat.opacity = sunF * 0.8;
+    }
+
+    // drift motes gently upward and reset
+    const pos = moteGeo.attributes.position;
+    for(let i=0;i<moteCount;i++){
+      let y = pos.getY(i) + moteSpeed[i]*dt;
+      if(y > H*0.9){ y = 0.05; }
+      pos.setY(i, y);
+      pos.setX(i, pos.getX(i) + Math.sin(t*0.3+i)*0.0006);
+    }
+    pos.needsUpdate = true;
+
+    // ---------- Sun effects: dust in the light, sunbeams, table glow, card
+    // glints — all driven by sunFactor (0 = night, 1 = full sun). ----------
+    const nightF = 1 - sunF;
+
+
+    // The glass itself reflects a little more once it's rainy/night — a
+    // subtle boost on top of the reflection layer's own authored opacity,
+    // plus a touch more glint along the pane's edges, both eased by nightF
+    // so they settle back down as the room returns to day.
+    if(reflectionMat) reflectionMat.opacity = reflectionBaseOpacity + nightF * 0.16;
+    if(windowEdgeGlowMats.length){
+      for(let i=0;i<windowEdgeGlowMats.length;i++){
+        const eg = windowEdgeGlowMats[i];
+        eg.mat.opacity = eg.base + nightF * eg.base * 0.35;
+      }
+    }
+
+    // ---------- Occasional lightning, outside the window ----------
+    // Schedules an infrequent strike (every ~20-55s, night only) made of
+    // 1-3 quick sub-flashes, each a fast rise / fast decay envelope. Fully
+    // self-contained: it only ever touches lightningLight and
+    // lightningFlashMat (both dedicated to this effect), so it can't step
+    // on the rain, motes, sunbeams, or day/night transition running
+    // alongside it.
+    if(nightF > 0.6 && lightningFlickers.length === 0 && t > lightningNextAt){
+      const flickerCount = 1 + Math.floor(Math.random()*3);
+      let cursor = 0;
+      lightningFlickers = [];
+      for(let i=0;i<flickerCount;i++){
+        const dur = 0.05 + Math.random()*0.08;
+        lightningFlickers.push({ start: t + cursor, dur, peak: 0.55 + Math.random()*0.45 });
+        cursor += dur + 0.05 + Math.random()*0.10;
+      }
+      lightningNextAt = t + cursor + 12 + Math.random()*20;
+    }
+    let lightningEnv = 0;
+    if(lightningFlickers.length){
+      let stillActive = false;
+      for(let i=0;i<lightningFlickers.length;i++){
+        const f = lightningFlickers[i];
+        const age = t - f.start;
+        if(age >= 0 && age <= f.dur){
+          const lt = age / f.dur;
+          // sharp rise, quick decay — reads as a real strike, not a fade
+          const e = lt < 0.18 ? (lt/0.18) : Math.pow(1 - (lt-0.18)/0.82, 2);
+          lightningEnv = Math.max(lightningEnv, e * f.peak);
+          stillActive = true;
+        } else if(age < 0){
+          stillActive = true;
+        }
+      }
+      if(!stillActive) lightningFlickers = [];
+    }
+    const lightningAmt = lightningEnv * nightF;
+    if(lightningLight) lightningLight.intensity = lightningAmt * 3.2;
+    if(lightningFlashMat) lightningFlashMat.opacity = lightningAmt * 0.9;
+
+    // Ambient dust becomes visibly brighter/bigger once it's lit by real sun.
+    moteMat.opacity = moteBaseOpacity + sunF * 0.4;
+    moteMat.size = 0.028 + sunF * 0.01;
+
+    // The concentrated beam-dust cluster drifts along the sunbeam corridor
+    // and only lights up as the sun comes up.
+    const bpos = beamMoteGeo.attributes.position;
+    for(let i=0;i<beamMoteCount;i++){
+      let bx = bpos.getX(i) + beamDir.x*beamMoteSpeed[i]*dt;
+      let bz = bpos.getZ(i) + beamDir.z*beamMoteSpeed[i]*dt;
+      let by = bpos.getY(i) + Math.sin(t*0.4+i)*0.0004;
+      const traveled = (beamOrigin.x - bx)*beamDir.x + (beamOrigin.z - bz)*beamDir.z;
+      if(traveled > 4.6){ bx = beamOrigin.x + (Math.random()-0.5)*0.3; bz = beamOrigin.z + (Math.random()-0.5)*0.3; }
+      bpos.setX(i, bx); bpos.setY(i, by); bpos.setZ(i, bz);
+    }
+    bpos.needsUpdate = true;
+    beamMoteMat.opacity = sunF * (0.75 + Math.sin(t*0.6)*0.06);
+
+    // Sunbeams stretching across the floor: fade in with the sun, each with
+    // a slow independent shimmer so they don't feel perfectly static.
+    sunbeamMats.forEach((m, i) => {
+      m.opacity = sunF * m.userData.targetOpacity * (0.9 + Math.sin(t*0.35 + i*1.7)*0.1);
+    });
+
+    // The flare on the glass itself, and the warm patch it casts on the
+    // coffee table — the room's two clearest "the sun is out" tells.
+    if(sunFlareMat) sunFlareMat.opacity = sunF * (0.8 + Math.sin(t*0.4)*0.08);
+    if(tableSunPatchMat) tableSunPatchMat.opacity = sunF * (0.85 + Math.sin(t*0.5+1.1)*0.1);
+
+    // Cards catching little glints of sunlight: each twinkles on its own
+    // phase/speed, gated overall by sunFactor so they're invisible at night.
+    if(cardGlints.length){
+      for(let i=0;i<cardGlints.length;i++){
+        const g = cardGlints[i];
+        const twinkle = Math.max(0, Math.sin(t*g.speed + g.phase)) ** 3;
+        g.mat.opacity = sunF * twinkle;
+      }
+    }
+
+    // Any theme toggle that begins fading the window layer in pulls its photos.
+    if(windowSceneRefs.halloweenMat && windowSceneRefs.halloweenMat.opacity > 0.001) window.__loadThemePhotos();
+
+    glowLight.intensity = 0.42 + Math.sin(t*0.5)*0.04;
+
+    // Halloween orange spill: driven by how far the Halloween toggle's own
+    // fade has progressed (windowSceneRefs.halloweenMat.opacity, animated
+    // independently by its own script) times nightFactor, so the glow is
+    // faint in daylight and strikingly more noticeable once night falls —
+    // exactly like real jack-o'-lantern light would read outside a window.
+    // Restricted to currentTheme === "halloween" since the same opacity
+    // now also drives the Christmas photo layer's fade, and that photo
+    // shouldn't bring the pumpkin-glow lighting along with it.
+    if(windowSceneRefs.halloweenGlowLight){
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const flicker = 0.92 + Math.sin(t*2.3)*0.05 + Math.sin(t*5.1)*0.03;
+      windowSceneRefs.halloweenGlowLight.intensity = hwOn * (0.18 + nightF*1.55) * flicker;
+    }
+    if(windowSceneRefs.halloweenBeamMat){
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      windowSceneRefs.halloweenBeamMat.opacity = hwOn * (0.06 + nightF*0.5) * (0.9 + Math.sin(t*0.45)*0.1);
+    }
+    // Daytime Halloween/Christmas photo: crossfades in front of the night
+    // photo in the same layer as the day/night toggle's own crossfade
+    // (windowSceneRefs.dayMat.opacity, 0 at night to 1 at day) rises, so
+    // switching to day while this layer is faded in shows the daytime photo
+    // instead — independent of hwOn, which keeps driving the leaves, LED
+    // colors, glow light, and beam above exactly as before. This part isn't
+    // theme-gated: it's generic crossfade math that works the same whether
+    // the layer currently holds the Halloween photos or the Christmas ones.
+    if(windowSceneRefs.halloweenDayMat){
+      const hwOn = windowSceneRefs.halloweenMat ? windowSceneRefs.halloweenMat.opacity : 0;
+      const dayFactor = windowSceneRefs.dayMat ? windowSceneRefs.dayMat.opacity : 0;
+      windowSceneRefs.halloweenDayMat.opacity = hwOn * dayFactor;
+    }
+
+    // Falling leaves outside the Halloween window: each leaf drops down the
+    // window at a gust-modulated speed, sways along two layered waves (a
+    // slow wide drift plus a quicker small wobble) for an organic, wind-
+    // tossed path rather than one clean sine, and tumbles by periodically
+    // narrowing toward edge-on and back — mimicking a leaf turning end-
+    // over-end rather than spinning flat like a coin. Leaves recycle back
+    // to the top once they drop out of view (a continuous rain of leaves),
+    // gated by the Halloween toggle's own fade so they only ever appear
+    // while the Halloween scene is faded in. Leaves on the window's TV-
+    // corner half (see pickLeafBaseX above) get a small size/opacity boost
+    // since that half reads more oblique/foreshortened from the usual
+    // camera angles and would otherwise look emptier. Also restricted to
+    // currentTheme === "halloween" so this autumn-leaf rain doesn't appear
+    // when the same opacity is instead fading in the Christmas photo.
+    if(windowSceneRefs.halloweenLeaves){
+      const hwOn = (window.currentTheme === 'halloween' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const leaves = windowSceneRefs.halloweenLeaves;
+      const halfWinH = winH * 0.5;
+      // The entry line sits just inside the true top edge (so leaves never
+      // poke out over the wall); the floor line sits at the very bottom of
+      // the window, i.e. the actual floor. Leaves are only recycled once
+      // they've dropped a bit *past* the floor line — out of view — rather
+      // than the instant they cross it, and fade out/in over a short band
+      // around each line, so a leaf visibly finishes its fall to the floor
+      // and a fresh one visibly begins its fall from the top instead of
+      // either popping in or vanishing mid-frame.
+      const leafTopEdge = halfWinH - winH*0.04;
+      const leafFloorEdge = -halfWinH;
+      const leafFadeBand = winH*0.06;
+      for(let i=0;i<leaves.length;i++){
+        const leaf = leaves[i];
+        const gust = 1 + leaf.gustAmp * Math.sin(t*leaf.gustFreq + leaf.gustPhase);
+        leaf.y -= leaf.fallSpeed * gust * dt;
+        if(leaf.y < leafFloorEdge - leafFadeBand){
+          // Recycled leaves reappear above the entry line, at a random
+          // distance within one fade band, so the fade-in below has room
+          // to run its course before the leaf is actually visible.
+          leaf.y = leafTopEdge + leafFadeBand*0.5 + Math.random()*leafFadeBand*0.5;
+          leaf.baseX = pickLeafBaseX();
+          leaf.swayPhase = Math.random()*Math.PI*2;
+          leaf.swayPhase2 = Math.random()*Math.PI*2;
+          leaf.tumblePhase = Math.random()*Math.PI*2;
+        }
+        const sway = Math.sin(t*leaf.swayFreq + leaf.swayPhase) * leaf.swayAmp
+                   + Math.sin(t*leaf.swayFreq2 + leaf.swayPhase2) * leaf.swayAmp2;
+        const nearTv = leaf.baseX < 0;
+        const sideBoost = nearTv ? 1.18 : 1.0;
+        const tumble = 0.22 + 0.78*Math.abs(Math.cos(t*leaf.tumbleFreq + leaf.tumblePhase));
+        leaf.mesh.position.set(leaf.baseX + sway, leaf.y, 0);
+        leaf.mesh.rotation.z = leaf.rotPhase + t*leaf.rotSpeed;
+        leaf.mesh.scale.set(tumble * sideBoost, sideBoost, 1);
+        // Smoothly fade in as a leaf crosses down through the entry line
+        // and fade out as it crosses down through the floor line, instead
+        // of an abrupt appear/disappear at either edge.
+        let edgeFade = 1;
+        if(leaf.y > leafTopEdge){
+          edgeFade = Math.max(0, 1 - (leaf.y - leafTopEdge)/leafFadeBand);
+        } else if(leaf.y < leafFloorEdge){
+          edgeFade = Math.max(0, 1 - (leafFloorEdge - leaf.y)/leafFadeBand);
+        }
+        leaf.mat.opacity = hwOn * leaf.baseOpacity * edgeFade * (nearTv ? 1.12 : 1) * (0.75 + 0.25*tumble);
+      }
+    }
+
+    // Falling snow outside the Christmas window: a windy snowstorm of small
+    // sprites at varied depth (far = small/slow/dim, near = large/fast/
+    // bright), each drifting diagonally per its own wind-lean plus a light
+    // sway, spinning slowly, and recycling back above the window once it
+    // falls out of view — the same continuous-rain approach the Halloween
+    // leaves use above. Gated by the Christmas toggle's own fade (snowOn
+    // below, read from the same opacity the leaves read as hwOn) and
+    // restricted to currentTheme === "christmas" so the storm never shows
+    // up while that same opacity is instead fading in the Halloween leaves.
+    if(windowSceneRefs.snowflakes){
+      const snowOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      const flakes = windowSceneRefs.snowflakes;
+      const halfWinH = winH * 0.5;
+      const halfWinW = winW * 0.5;
+      const snowTopEdge = halfWinH - winH*0.02;
+      const snowFloorEdge = -halfWinH;
+      const snowFadeBand = winH*0.05;
+      // The fade band must fully reach zero opacity *before* halfWinW (the
+      // window pane's actual physical edge) — otherwise a wind-blown flake
+      // is still partly visible past the frame for a beat, which is what
+      // was bleeding past the right edge of the window. Ending the fade at
+      // 0.9*halfWinW leaves a solid safety margin inside the pane.
+      const snowHEdge = halfWinW * 0.62;
+      const snowHFadeWidth = halfWinW * 0.28;
+      const snowHClamp = halfWinW * 0.985; // hard safety net, just in case
+      for(let i=0;i<flakes.length;i++){
+        const flake = flakes[i];
+        const gust = 1 + flake.gustAmp * Math.sin(t*flake.gustFreq + flake.gustPhase);
+        flake.y -= flake.fallSpeed * gust * dt;
+        if(flake.y < snowFloorEdge - snowFadeBand){
+          // Recycled flakes reappear above the entry line (resetting how
+          // far they've "fallen" also resets their wind-lean drift), same
+          // fade-band easing the leaves use so nothing pops in/out.
+          flake.y = snowTopEdge + snowFadeBand*0.5 + Math.random()*winH*0.4;
+          flake.baseX = pickSnowBaseX();
+          flake.swayPhase = Math.random()*Math.PI*2;
+          flake.rotPhase = Math.random()*Math.PI*2;
+        }
+        const fallen = snowTopEdge - flake.y; // distance dropped since last reset
+        const sway = Math.sin(t*flake.swayFreq + flake.swayPhase) * flake.swayAmp;
+        const windX = fallen * flake.windLean * gust;
+        const x = Math.max(-snowHClamp, Math.min(snowHClamp, flake.baseX + windX + sway));
+        flake.mesh.position.x = x;
+        flake.mesh.position.y = flake.y;
+        flake.mesh.rotation.z = flake.rotPhase + t*flake.rotSpeed;
+        // Smoothly fade in/out crossing the top/floor lines, same as the
+        // leaves, plus a horizontal fade near the window's side edges so
+        // wind-blown flakes never pop out of view mid-drift.
+        let edgeFade = 1;
+        if(flake.y > snowTopEdge){
+          edgeFade = Math.max(0, 1 - (flake.y - snowTopEdge)/snowFadeBand);
+        } else if(flake.y < snowFloorEdge){
+          edgeFade = Math.max(0, 1 - (snowFloorEdge - flake.y)/snowFadeBand);
+        }
+        const hFade = Math.max(0, Math.min(1, 1 - (Math.abs(x) - snowHEdge)/snowHFadeWidth));
+        flake.mat.opacity = snowOn * flake.baseOpacity * edgeFade * hFade;
+      }
+    }
+    // Ambient glow behind the falling snow, standing in for outdoor lights
+    // catching the flakes — fades with the same Christmas opacity as the
+    // snow itself, and brightens gently at night vs. barely-there by day.
+    if(windowSceneRefs.snowGlowMat){
+      const snowOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      windowSceneRefs.snowGlowMat.opacity = snowOn * (0.45 + nightF*0.5) * (0.9 + Math.sin(t*0.6)*0.1);
+    }
+
+    // Christmas string lights wrapped around the desk legs: every bulb of a
+    // given color shares one material (same for the halo/core sprites), so
+    // fading the whole strand in/out is a handful of writes per frame, not
+    // one per bulb. Gated to currentTheme === "christmas" and driven by the
+    // same opacity the Christmas toggle already animates for the window
+    // photo, so the strand arrives and leaves in lockstep with everything
+    // else the toggle controls. Held at a fixed, steady brightness once lit
+    // — no flicker/shimmer over time — with the individual bulb-to-bulb
+    // brightness variation instead baked into each bulb's size at build
+    // time (see xmasBulbBrightness above).
+    if(deskChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      for(let i=0;i<deskChristmasLights.bulbMats.length;i++){
+        const m = deskChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 1.15;
+      }
+      for(let i=0;i<deskChristmasLights.bulbGlowMats.length;i++){
+        deskChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.7;
+      }
+      if(deskChristmasLights.bulbCoreMats){
+        for(let i=0;i<deskChristmasLights.bulbCoreMats.length;i++){
+          deskChristmasLights.bulbCoreMats[i].opacity = xmasOn * 0.95;
+        }
+      }
+      for(let i=0;i<deskChristmasLights.pointLights.length;i++){
+        deskChristmasLights.pointLights[i].intensity = xmasOn * 0.2;
+      }
+    }
+
+    // Christmas string lights run around the ceiling perimeter: same
+    // shared-material fade approach as the desk strand above, held steady
+    // (no shimmer) once lit, so the whole loop arrives and leaves in
+    // lockstep with the rest of the Christmas toggle's effects. Brightness
+    // multipliers here are dialed up noticeably higher than the desk
+    // strand's since this loop needs to read clearly from across the whole
+    // room, not just illuminate a pair of legs up close.
+    if(ceilingChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      for(let i=0;i<ceilingChristmasLights.bulbMats.length;i++){
+        const m = ceilingChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 2.0;
+      }
+      for(let i=0;i<ceilingChristmasLights.bulbGlowMats.length;i++){
+        ceilingChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.85;
+      }
+      if(ceilingChristmasLights.bulbCoreMats){
+        for(let i=0;i<ceilingChristmasLights.bulbCoreMats.length;i++){
+          ceilingChristmasLights.bulbCoreMats[i].opacity = xmasOn;
+        }
+      }
+      for(let i=0;i<ceilingChristmasLights.pointLights.length;i++){
+        ceilingChristmasLights.pointLights[i].intensity = xmasOn * 0.22;
+      }
+    }
+
+    // Christmas string lights wrapped around the window's outer frame:
+    // same shared-material fade approach as the other strands, held steady
+    // once lit, kept at moderate (not boosted) brightness since it sits
+    // right next to the window scene's own lighting and only needs a
+    // subtle, individually-glowing accent along the trim.
+    if(windowFrameChristmasLights){
+      const xmasOn = (window.currentTheme === 'christmas' && windowSceneRefs.halloweenMat) ? windowSceneRefs.halloweenMat.opacity : 0;
+      for(let i=0;i<windowFrameChristmasLights.bulbMats.length;i++){
+        const m = windowFrameChristmasLights.bulbMats[i];
+        m.opacity = xmasOn;
+        m.emissiveIntensity = xmasOn * 1.15;
+      }
+      for(let i=0;i<windowFrameChristmasLights.bulbGlowMats.length;i++){
+        windowFrameChristmasLights.bulbGlowMats[i].opacity = xmasOn * 0.65;
+      }
+      if(windowFrameChristmasLights.bulbCoreMats){
+        for(let i=0;i<windowFrameChristmasLights.bulbCoreMats.length;i++){
+          windowFrameChristmasLights.bulbCoreMats[i].opacity = xmasOn * 0.95;
+        }
+      }
+      for(let i=0;i<windowFrameChristmasLights.pointLights.length;i++){
+        windowFrameChristmasLights.pointLights[i].intensity = xmasOn * 0.1;
+      }
+      // Interior mullion strand: same fade, but dialed down a notch below
+      // the outer frame so the window reads as accented along its trim
+      // rather than uniformly, overly lit across its whole face.
+      if(windowFrameChristmasLights.mullionBulbMats){
+        for(let i=0;i<windowFrameChristmasLights.mullionBulbMats.length;i++){
+          const m = windowFrameChristmasLights.mullionBulbMats[i];
+          m.opacity = xmasOn;
+          m.emissiveIntensity = xmasOn * 0.7;
+        }
+        for(let i=0;i<windowFrameChristmasLights.mullionGlowMats.length;i++){
+          windowFrameChristmasLights.mullionGlowMats[i].opacity = xmasOn * 0.4;
+        }
+        if(windowFrameChristmasLights.mullionCoreMats){
+          for(let i=0;i<windowFrameChristmasLights.mullionCoreMats.length;i++){
+            windowFrameChristmasLights.mullionCoreMats[i].opacity = xmasOn * 0.8;
+          }
+        }
+      }
+    }
+
+
+    // Gently pulse the coffee table's self-lit glow (tabletop/leg emissive
+    // and the halo/rim meshes) so the whole table breathes softly rather
+    // than glowing at a flat, static intensity. On hover, everything below
+    // also brightens: the hologram emitter/beam, the table's own glow, and
+    // the point lights that spill reflected light onto nearby objects.
+    if(tableLacquerMat){
+      const tablePulse = Math.sin(t*0.5)*0.5 + 0.5; // 0..1, same rhythm as glowLight
+      // Sunlight lands on the table too: a warm lift on top of the table's
+      // own cool blue self-glow, so the lacquer reads as sun-warmed by day.
+      tableLacquerMat.emissive.copy(tableCoolEmissive).lerp(tableWarmEmissive, sunF);
+      tableLacquerMat.emissiveIntensity = 0.13 + tablePulse*0.07 + hoverEase*0.42 + sunF*0.18;
+      if(tableLegMat) tableLegMat.emissiveIntensity = 0.06 + tablePulse*0.035 + hoverEase*0.20;
+      if(tableHaloMat) tableHaloMat.opacity = 0.12 + tablePulse*0.06 + hoverEase*0.32;
+      if(tableHaloMat2) tableHaloMat2.opacity = 0.045 + tablePulse*0.03 + hoverEase*0.16;
+      if(tableRimMat) tableRimMat.opacity = 0.5 + hoverEase*0.5;
+    }
+    if(hologramPointLight){
+      hologramPointLight.intensity = 1.15 + hoverEase*1.8;
+      hologramPointLight.distance = 1.7 + hoverEase*0.9;
+    }
+    if(hologramEmitterMat) hologramEmitterMat.opacity = Math.min(1, 0.85 + hoverEase*0.3);
+    if(hologramBeamMat) hologramBeamMat.opacity = 0.09 + hoverEase*0.32;
+    if(tableUnderGlowLight){
+      tableUnderGlowLight.intensity = 0.55 + hoverEase*1.1;
+      // A slightly wider reach on hover, so a little more of the reflected
+      // light lands on nearby objects (cards, mug, cushions) rather than
+      // staying pooled tight under the table.
+      tableUnderGlowLight.distance = 1.4 + hoverEase*0.9;
+    }
+    // Only touch the buttons' inline style when the value actually changed
+    // (hoverEase sits at 0 on almost every frame), instead of rebuilding
+    // the string and rewriting the style every frame.
+    if(enterBtn || instagramBtn){
+      const btnFilter = `brightness(${(1 + hoverEase*1.0).toFixed(3)})`;
+      if(btnFilter !== lastBtnFilter){
+        lastBtnFilter = btnFilter;
+        if(enterBtn) enterBtn.style.filter = btnFilter;
+        if(instagramBtn) instagramBtn.style.filter = btnFilter;
+      }
+    }
+
+    // Same hover brightening applied to the 3 monitors and the TV's own
+    // screen-glow overlay, pushed further than the table's own glow — the
+    // TV's LED backlight (glow plane + point lights) is driven separately,
+    // just below, so it isn't tied to the table's hover state.
+    for(let i=0;i<screenGlowRefs.length;i++){
+      const ref = screenGlowRefs[i];
+      if(ref === tvGlowRef) continue;
+      ref.glowMat.opacity = ref.baseGlowOpacity + hoverEase*1.3;
+      if(ref.led){
+        ref.led.intensity = ref.baseLedIntensity * (1 + hoverEase*1.8);
+        ref.led.distance  = (ref.baseLedDistance || ref.led.distance) * (1 + hoverEase*0.28);
+      }
+      if(ref.spill){
+        ref.spill.intensity = ref.baseSpillIntensity * (1 + hoverEase*1.8);
+        ref.spill.distance  = (ref.baseSpillDistance || ref.spill.distance) * (1 + hoverEase*0.28);
+      }
+    }
+
+    // TV "click me" cue: a faint, slow breathing pulse on its backlight at
+    // all times — subtle enough not to compete with the table's own pulse
+    // or the room's other glows — plus a noticeably stronger brighten the
+    // instant the cursor lands on it, echoing the table's hover-brighten
+    // but scoped to the TV alone so the two affordances read as distinct.
+    if(tvGlowRef){
+      const tvIdlePulse = 0.5 + 0.5*Math.sin(t*0.9 + 1.3); // offset phase/rate from the table's t*0.5 pulse
+      const tvBoost = tvIdlePulse*0.16 + tvHoverEase*1.7;
+      tvGlowRef.glowMat.opacity = tvGlowRef.baseGlowOpacity + tvBoost;
+      tvGlowRef.led.intensity   = tvGlowRef.baseLedIntensity * (1 + tvIdlePulse*0.10 + tvHoverEase*1.9);
+      tvGlowRef.led.distance    = (tvGlowRef.baseLedDistance || tvGlowRef.led.distance) * (1 + tvHoverEase*0.3);
+      tvGlowRef.spill.intensity = tvGlowRef.baseSpillIntensity * (1 + tvIdlePulse*0.10 + tvHoverEase*1.9);
+      tvGlowRef.spill.distance  = (tvGlowRef.baseSpillDistance || tvGlowRef.spill.distance) * (1 + tvHoverEase*0.3);
+    }
+
+    // Brief extra spike on the TV's own backlight during its power-on
+    // flash, so the pulse reads as casting real light across the room for
+    // an instant, not just brightening the screen glass itself. Applied
+    // after the hover pass above so it isn't overwritten by it.
+    if(tvGlowRef && tvPoweredOn && tvPowerOnStartTime !== null){
+      const flashX = (t - tvPowerOnStartTime) / TV_FLASH_DUR;
+      if(flashX <= 1){
+        const roomFlashE = pulseEnvelope(flashX, 0.16, 2.4);
+        tvGlowRef.led.intensity   += tvGlowRef.baseLedIntensity * roomFlashE * 2.6;
+        tvGlowRef.spill.intensity += tvGlowRef.baseSpillIntensity * roomFlashE * 2.6;
+        tvGlowRef.glowMat.opacity = Math.min(1, tvGlowRef.glowMat.opacity + roomFlashE * 0.9);
+      }
+    }
+
+    // Keep the Enter button pinned in screen space directly above the
+    // coffee table's world position, tracking wherever the camera is
+    // currently looking — a position update, not a visual animation.
+    // Skipped once the enter sequence has begun so it can't undo the
+    // display:none set by startEnterSequence() and make the buttons
+    // reappear mid-dive.
+    if(enterBtn && !entering){
+      const p = enterBtnProjVec.copy(enterButtonAnchor).project(camera);
+      if(p.z < 1){
+        const leftPx = (p.x * 0.5 + 0.5) * window.innerWidth;
+        const topPx  = (1 - (p.y * 0.5 + 0.5)) * window.innerHeight;
+        if(lastBtnDisplay !== 'block'){
+          lastBtnDisplay = 'block';
+          enterBtn.style.display = 'block';
+          if(instagramBtn) instagramBtn.style.display = 'block';
+        }
+        enterBtn.style.left = leftPx + 'px';
+        enterBtn.style.top  = topPx + 'px';
+        if(instagramBtn){
+          instagramBtn.style.left = leftPx + 'px';
+          instagramBtn.style.top  = (topPx - 68) + 'px';
+        }
+      } else if(lastBtnDisplay !== 'none'){
+        lastBtnDisplay = 'none';
+        enterBtn.style.display = 'none';
+        if(instagramBtn) instagramBtn.style.display = 'none';
+      }
+    }
+
+    renderFrame();
+  }
+
+  // Resolve the center monitor's screen world position now that the full
+  // scene graph is built (matrices must be current before localToWorld is
+  // reliable). A small +0.015 local offset lands exactly on the screen
+  // plane rather than the monitor's pivot. Also resolve the screen's
+  // outward-facing normal (its local +Z axis, carried into world space) —
+  // used by the Enter dive to curve its approach so it arrives dead-on
+  // instead of at whatever angle the visitor happened to be viewing from.
+  scene.updateMatrixWorld(true);
+  if(centerMonitorGroup){
+    centerMonitorGroup.localToWorld(centerMonitorWorldPos.set(0, 0, 0.015));
+    centerMonitorNormal.set(0, 0, 1).transformDirection(centerMonitorGroup.matrixWorld).normalize();
+  }
+  if(modernPhoneScreenMesh){
+    modernPhoneScreenMesh.localToWorld(flightPhoneScreenWorldPos.set(0, 0, 0));
+    flightPhoneNormal.set(0, 0, 1).transformDirection(modernPhoneScreenMesh.matrixWorld).normalize();
+    flightPhoneUp.set(0, 1, 0).transformDirection(modernPhoneScreenMesh.matrixWorld).normalize();
+  }
+
+  // ---------- Global interior material polish pass ----------
+  // A single traversal over the finished room, run once everything above
+  // has been built, so every material benefits without having to touch
+  // each of the hundreds of individual MeshStandardMaterial/MeshPhysical
+  // Material calls above one by one. Two cheap, high-impact fixes:
+  //   1) Anisotropic filtering on every texture map — this is what keeps
+  //      the floor grain, fabric weave, and desk wood texture crisp at a
+  //      grazing viewing angle instead of blurring into a soft smear,
+  //      which is one of the biggest single contributors to a scene
+  //      reading as "HD" vs. "hazy". Cost is essentially free — it's a
+  //      GPU sampling setting, not extra geometry or draw calls.
+  //   2) A small ambient-occlusion-like contact darkening: materials that
+  //      already carry the room's HDRI env map get a touch more
+  //      reflective presence (envMapIntensity) so metal/lacquer/glass
+  //      surfaces pick up believable room reflections rather than reading
+  //      flat, while plain matte materials are left untouched.
+  const maxAniso = Math.min(2, renderer.capabilities.getMaxAnisotropy());
+  scene.traverse((obj)=>{
+    if(!obj.isMesh || !obj.material) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    mats.forEach((mat)=>{
+      if(!mat) return;
+      ['map','normalMap','roughnessMap','metalnessMap','aoMap','bumpMap'].forEach((slot)=>{
+        const tex = mat[slot];
+        if(tex && tex.isTexture && tex.anisotropy !== maxAniso){
+          tex.anisotropy = maxAniso;
+        }
+      });
+      // Only nudge materials that already opted into env reflections —
+      // never invent reflectivity on materials that were authored flat.
+      if(mat.envMap && typeof mat.envMapIntensity === 'number'){
+        mat.envMapIntensity = Math.min(1.35, mat.envMapIntensity * 1.12);
+      }
+    });
+  });
+
+  // reveal
+  setTimeout(()=>{
+    const loading = document.getElementById('loading');
+    loading.style.opacity = '0';
+    setTimeout(()=> loading.remove(), 850);
+  }, 400);
+
+  animate();
+  requestAnimationFrame(buildSnowstorm);
+  // Start fetching the TV video only after the first scene frame has been
+  // rendered and painted, so the room appears first.
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      if(window.__startTvVideoLoad) window.__startTvVideoLoad();
+    });
+  });
+
+  // ---------- Pause rendering while the tab is hidden ----------
+  // The render loop above runs continuously by design (camera drift, dust
+  // motes, hologram, etc. never stop animating). That's correct while the
+  // scene is visible, but a backgrounded tab was still paying full
+  // GPU/CPU cost for frames nobody can see. Cancelling the pending RAF on
+  // hide (and letting animate() simply stop re-scheduling itself) removes
+  // that wasted work with zero visual difference; clock.getDelta() is
+  // drained once on return so the first frame back doesn't see a huge dt
+  // and jump animations forward to "catch up".
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden){
+      if(rafHandle !== null){
+        cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+    } else if(rafHandle === null){
+      clock.getDelta();
+      animate();
+    }
+  });
+})();
